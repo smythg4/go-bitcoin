@@ -8,49 +8,33 @@ import (
 )
 
 func main() {
-	// secret
-	secret, _ := new(big.Int).SetString("mysupersecret", 58)
-
-	// private key
+	// Create a private key from a secret
+	secret := big.NewInt(0xdeadbeef54321)
 	privateKey := keys.NewPrivateKey(secret)
 
-	// public key
+	// Generate public key
 	publicKey := privateKey.PublicKey()
 
-	fmt.Println("Converting your key into bytes...")
-	dataFull := publicKey.Serialize(false)
-	dataComp := publicKey.Serialize(true)
+	// Generate Bitcoin addresses
+	mainnetAddr := publicKey.Address(true, false) // compressed, mainnet
+	testnetAddr := publicKey.Address(true, true)  // compressed, testnet
 
-	keyFull, err := publicKey.Deserialize(dataFull)
-	if err != nil {
-		fmt.Println("uncompressed deserialization failed:", err)
-	} else if keyFull.Point.Equals(publicKey.Point) {
-		fmt.Println("✓ Uncompressed round-trip successful")
-	} else {
-		fmt.Println("✗ Uncompressed round-trip FAILED")
-	}
+	fmt.Printf("Mainnet address: %s\n", mainnetAddr)
+	fmt.Printf("Testnet address: %s\n", testnetAddr)
 
-	keyComp, err := publicKey.Deserialize(dataComp)
-	if err != nil {
-		fmt.Println("compressed deserialization failed:", err)
-	} else if keyComp.Point.Equals(publicKey.Point) {
-		fmt.Println("✓ Compressed round-trip successful")
-	} else {
-		fmt.Println("✗ Compressed round-trip FAILED")
-	}
+	// Export private key in WIF format
+	wif := privateKey.Serialize(true, false) // compressed, mainnet
+	fmt.Printf("Private key (WIF): %s\n", wif)
 
-	sig, err := privateKey.Sign(big.NewInt(1234567890))
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(sig)
-	bytes := sig.Serialize()
-	fmt.Printf("%x\n", bytes)
+	// Sign a message
+	z := big.NewInt(1234567890)
+	sig, _ := privateKey.Sign(z)
 
-	fmt.Printf("Address: %v\n", publicKey.Address(false, true))
+	// Verify signature
+	valid := publicKey.Verify(z, sig)
+	fmt.Printf("Signature valid: %v\n", valid)
 
-	fmt.Println()
-	fmt.Println()
-
-	fmt.Println("WIF:", privateKey.Serialize(false, true))
+	// Serialize signature in DER format
+	derSig := sig.Serialize()
+	fmt.Printf("DER signature: %x\n", derSig)
 }
