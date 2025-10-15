@@ -1,4 +1,4 @@
-package field_elements
+package eccmath
 
 import (
 	"errors"
@@ -15,13 +15,12 @@ func (fe FieldElement) String() string {
 	return fmt.Sprintf("%d (mod %d)", fe.num, fe.prime)
 }
 
-func NewFieldElement(num, prime int) FieldElement {
-	n := big.NewInt(int64(num))
-	p := big.NewInt(int64(prime))
-	n.Mod(n, p)
+func NewFieldElement(num, prime *big.Int) FieldElement {
+	n := new(big.Int).Set(num) // Copy first
+	n.Mod(n, prime)
 	return FieldElement{
 		num:   n,
-		prime: p,
+		prime: prime,
 	}
 }
 

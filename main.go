@@ -2,37 +2,39 @@ package main
 
 import (
 	"fmt"
-	ellipticcurve "go-bitcoin/internal/elliptic_curve"
+	"go-bitcoin/internal/keys"
+	"math/big"
 )
 
 func main() {
-	c := ellipticcurve.NewCurve(0, 7, 223)
+	// secret
+	secret := big.NewInt(0xdeadbeef54321)
 
-	points := [][]int{[]int{192, 105}, []int{143, 98}, []int{47, 71}, []int{47, 71}, []int{47, 71}, []int{47, 71}}
-	ns := []int{2, 2, 2, 4, 8, 21}
+	// private key
+	privateKey := keys.NewPrivateKey(secret)
 
-	if len(points) != len(ns) {
-		fmt.Println("slice lengths aren't equal")
-		return
+	// public key
+	publicKey := privateKey.PublicKey()
+
+	fmt.Println("Converting your key into bytes...")
+	dataFull := publicKey.SecSerialize(false)
+	dataComp := publicKey.SecSerialize(true)
+
+	keyFull, err := publicKey.SecDeserialize(dataFull)
+	if err != nil {
+		fmt.Println("uncompressed deserialization failed:", err)
+	} else if keyFull.Point.Equals(publicKey.Point) {
+		fmt.Println("✓ Uncompressed round-trip successful")
+	} else {
+		fmt.Println("✗ Uncompressed round-trip FAILED")
 	}
 
-	for i, pair := range points {
-		if len(pair) != 2 {
-			fmt.Println("int pair isn't length 2")
-			return
-		}
-		x := pair[0]
-		y := pair[1]
-		n := ns[i]
-
-		pt, err := ellipticcurve.NewPoint(x, y, c)
-		if err != nil {
-			fmt.Printf("error generating point - %v", err)
-		}
-		res, err := pt.ScalarMul(n)
-		if err != nil {
-			fmt.Printf("error with scalar multiplication - %v", err)
-		}
-		fmt.Printf("%d * %v = %v\n", n, pt, res)
+	keyComp, err := publicKey.SecDeserialize(dataComp)
+	if err != nil {
+		fmt.Println("compressed deserialization failed:", err)
+	} else if keyComp.Point.Equals(publicKey.Point) {
+		fmt.Println("✓ Compressed round-trip successful")
+	} else {
+		fmt.Println("✗ Compressed round-trip FAILED")
 	}
 }

@@ -1,24 +1,22 @@
-package ellipticcurve
+package eccmath
 
 import (
 	"errors"
 	"fmt"
-	"go-bitcoin/internal/field_elements"
+	"math/big"
 )
 
 // bitcoin uses elliptic curve secp256k1: y^2 = x^3 + 7
 
-const P int = 223
-
 type Curve struct {
-	a, b field_elements.FieldElement
-	p    int
+	a, b FieldElement
+	p    *big.Int
 }
 
-func NewCurve(a, b, p int) *Curve {
+func NewCurve(a, b, p *big.Int) *Curve {
 	return &Curve{
-		a: field_elements.NewFieldElement(a, p),
-		b: field_elements.NewFieldElement(b, p),
+		a: NewFieldElement(a, p),
+		b: NewFieldElement(b, p),
 		p: p,
 	}
 }
@@ -36,19 +34,19 @@ func (c *Curve) GetInfPoint() Point {
 
 // you can use this once you determine a prime constant P
 // var Secp256k1 = &Curve{
-// 	a: field_elements.NewFieldElement(0, P),
-// 	b: field_elements.NewFieldElement(7, P),
+// 	a: NewFieldElement(0, P),
+// 	b: NewFieldElement(7, P),
 // }
 
 type Point struct {
-	x, y       field_elements.FieldElement
+	x, y       FieldElement
 	curve      *Curve
 	isInfinity bool
 }
 
-func NewPoint(x, y int, c *Curve) (Point, error) {
-	yFe := field_elements.NewFieldElement(y, c.p)
-	xFe := field_elements.NewFieldElement(x, c.p)
+func (c *Curve) NewPoint(x, y *big.Int) (Point, error) {
+	yFe := NewFieldElement(y, c.p)
+	xFe := NewFieldElement(x, c.p)
 
 	ySqr := yFe.Pow(2)
 	xCub := xFe.Pow(3)
@@ -161,45 +159,45 @@ func (p Point) String() string {
 	return fmt.Sprintf("(%v, %v)\n", p.x, p.y)
 }
 
-func getSlope(p1, p2 Point) (field_elements.FieldElement, error) {
+func getSlope(p1, p2 Point) (FieldElement, error) {
 	if !p1.curve.Equals(*p2.curve) {
-		return field_elements.FieldElement{}, fmt.Errorf("%v, %v are not on the same curve", p1, p2)
+		return FieldElement{}, fmt.Errorf("%v, %v are not on the same curve", p1, p2)
 	}
 
 	numerator, err := p2.y.Sub(p1.y)
 	if err != nil {
-		return field_elements.FieldElement{}, err
+		return FieldElement{}, err
 	}
 	denom, err := p2.x.Sub(p1.x)
 	if err != nil {
-		return field_elements.FieldElement{}, err
+		return FieldElement{}, err
 	}
 	if denom.IsZero() {
-		return field_elements.FieldElement{}, errors.New("divide by zero")
+		return FieldElement{}, errors.New("divide by zero")
 	}
 
 	return numerator.Div(denom)
 }
 
-func doubleSlope(p Point) (field_elements.FieldElement, error) {
+func doubleSlope(p Point) (FieldElement, error) {
 	xSqr := p.x.Pow(2)
-	threeXSqr, err := xSqr.Mul(field_elements.NewFieldElement(3, p.curve.p))
+	threeXSqr, err := xSqr.Mul(NewFieldElement(big.NewInt(3), p.curve.p))
 	if err != nil {
-		return field_elements.FieldElement{}, nil
+		return FieldElement{}, nil
 	}
 
 	numerator, err := threeXSqr.Add(p.curve.a)
 	if err != nil {
-		return field_elements.FieldElement{}, err
+		return FieldElement{}, err
 	}
 
-	denom, err := p.y.Mul(field_elements.NewFieldElement(2, p.curve.p))
+	denom, err := p.y.Mul(NewFieldElement(big.NewInt(2), p.curve.p))
 	if err != nil {
-		return field_elements.FieldElement{}, err
+		return FieldElement{}, err
 	}
 
 	if denom.IsZero() {
-		return field_elements.FieldElement{}, errors.New("divide by zero")
+		return FieldElement{}, errors.New("divide by zero")
 	}
 
 	return numerator.Div(denom)
@@ -211,7 +209,7 @@ func doublePoint(p Point) (Point, error) {
 		return Point{}, err
 	}
 	sSqr := slope.Pow(2)
-	twoX, err := p.x.Mul(field_elements.NewFieldElement(2, p.curve.p))
+	twoX, err := p.x.Mul(NewFieldElement(big.NewInt(2), p.curve.p))
 	if err != nil {
 		return Point{}, err
 	}
@@ -235,13 +233,58 @@ func doublePoint(p Point) (Point, error) {
 }
 
 func (p Point) ScalarMul(n int) (Point, error) {
-	res := p
+	result := p.curve.GetInfPoint()
+	addend := p
 	var err error
-	for i := 0; i < n-1; i++ {
-		res, err = res.Add(p)
+
+	for n > 0 {
+		if n&1 == 1 { // if bit set
+			result, err = result.Add(addend)
+			if err != nil {
+				return Point{}, err
+			}
+		}
+		addend, err = addend.Add(addend) // double the addend
 		if err != nil {
 			return Point{}, err
 		}
+		n >>= 1 // shift the bit
 	}
-	return res, nil
+	return result, nil
+}
+
+func (p Point) ScalarMulBig(n *big.Int) (Point, error) {
+	result := p.curve.GetInfPoint()
+	addend := p
+	var err error
+
+	nCopy := new(big.Int).Set(n)
+	zero := big.NewInt(0)
+	one := big.NewInt(1)
+
+	for nCopy.Cmp(zero) > 0 {
+		if new(big.Int).And(nCopy, one).Cmp(one) == 0 { // if bit set
+			result, err = result.Add(addend)
+			if err != nil {
+				return Point{}, err
+			}
+		}
+		addend, err = addend.Add(addend) // double the addend
+		if err != nil {
+			return Point{}, err
+		}
+		nCopy.Rsh(nCopy, 1) // shift the bit
+	}
+	return result, nil
+}
+
+func (p Point) IsInf() bool {
+	return p.isInfinity
+}
+
+func mustPoint(p Point, err error) Point {
+	if err != nil {
+		panic(err)
+	}
+	return p
 }
