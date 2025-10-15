@@ -3,6 +3,7 @@ package eccmath
 import (
 	"crypto/rand"
 	"fmt"
+	"go-bitcoin/internal/encoding"
 	"math/big"
 )
 
@@ -163,7 +164,7 @@ func (p *S256Point) Verify(z *big.Int, sig Signature) bool {
 	return new(big.Int).Mod(total.x.num, N).Cmp(sig.r) == 0
 }
 
-func (p *S256Point) SecSerialize(compressed bool) []byte {
+func (p *S256Point) Serialize(compressed bool) []byte {
 	if !compressed {
 		// uncompressed
 		result := make([]byte, 65)
@@ -197,7 +198,7 @@ func (p *S256Point) SecSerialize(compressed bool) []byte {
 	}
 }
 
-func (p *S256Point) SecDeserialize(data []byte) (S256Point, error) {
+func (p *S256Point) Deserialize(data []byte) (S256Point, error) {
 	if len(data) >= 65 && data[0] == 0x04 {
 		// Uncompressed format
 		x := new(big.Int).SetBytes(data[1:33])  // bytes 1-32
@@ -238,4 +239,14 @@ func (p *S256Point) SecDeserialize(data []byte) (S256Point, error) {
 	}
 
 	return S256Point{}, fmt.Errorf("invalid SEC format")
+}
+
+func (p *S256Point) Address(compressed, testnet bool) string {
+	data := p.Serialize(compressed)
+	h160 := encoding.Hash160(data)
+	prefix := 0x00
+	if testnet {
+		prefix = 0x6f // testnet prefix
+	}
+	return encoding.EncodeBase58Checksum(append([]byte{byte(prefix)}, h160...))
 }
