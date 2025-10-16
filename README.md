@@ -7,7 +7,8 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
 **Chapter 3: Elliptic Curve Cryptography** ✅
 **Chapter 4: Serialization** ✅
 **Chapter 5: Transactions** ✅
-**Chapter 6: Script** (next)
+**Chapter 6: Script** ✅
+**Chapter 7: Transaction Signing** (next)
 
 ## Features
 
@@ -70,10 +71,19 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
 - Efficient serialization/deserialization from io.Reader
 
 ### Bitcoin Script (`internal/script`)
-- Script command parsing and serialization
-- Support for data push operations (1-75 bytes, PUSHDATA1/2/4)
-- Opcode definitions (OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG, etc.)
-- Clean separation of data elements vs opcodes using ScriptCommand type
+- **Script Parsing & Serialization**: Full Script parsing and serialization with varint encoding
+- **Script Execution Engine**: Stack-based virtual machine for executing Bitcoin scripts
+- **Data Push Operations**: Support for 1-75 byte inline push, OP_PUSHDATA1/2/4
+- **Stack Operations**: OP_DUP, OP_2DUP, OP_DROP, OP_2DROP, OP_SWAP, OP_TOALTSTACK, OP_FROMALTSTACK
+- **Arithmetic Operations**: OP_ADD, OP_SUB, OP_MUL with Bitcoin number encoding (little-endian signed)
+- **Logical Operations**: OP_EQUAL, OP_EQUALVERIFY, OP_VERIFY, OP_NOT
+- **Flow Control**: OP_IF, OP_NOTIF, OP_ELSE, OP_ENDIF with nested block support
+- **Cryptographic Operations**:
+  - OP_SHA1, OP_SHA256, OP_HASH160, OP_HASH256
+  - OP_CHECKSIG, OP_CHECKSIGVERIFY with full ECDSA verification
+- **Numeric Constants**: OP_0 through OP_16, OP_1NEGATE
+- **P2PKH Script Validation**: Complete Pay-to-Public-Key-Hash transaction verification
+- **Script Combining**: Merge ScriptSig with ScriptPubKey for evaluation
 
 ### Transaction Handling (`internal/transactions`)
 - **Transaction Structure**: Version, inputs, outputs, locktime
@@ -87,9 +97,14 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
   - ScriptPubKey (locking script)
 - **Transaction Serialization/Deserialization**: Full round-trip support
 - **Transaction ID Calculation**: Hash256 with proper byte reversal
+- **Signature Hash (SigHash)**: Complete signature hash calculation for transaction signing/verification
 - **Transaction Fetching**: Download and parse real transactions from Blockstream API
+  - Automatic legacy transaction detection (filters SegWit)
+  - Multi-block search capability
+  - Caching for efficient repeated fetches
 - **SegWit Support**: Detects and strips SegWit marker bytes for legacy parsing
 - **UTXO Chain Traversal**: Follow transaction inputs to previous outputs
+- **Transaction Verification**: Full P2PKH transaction validation from the blockchain
 
 ## Example Usage
 
@@ -115,28 +130,65 @@ wif := privateKey.Serialize(true, false)  // compressed, mainnet
 fmt.Printf("Private key (WIF): %s\n", wif)
 ```
 
-### Fetching and Parsing Transactions
+### Verifying Bitcoin Transactions
 
 ```go
 // Create transaction fetcher
 fetcher := transactions.NewTxFetcher()
 
 // Fetch a real testnet transaction
-txId := "e0fc453aa494912627ca3d93c411e8b5f1c8e8d81d5a07af023d45426f224fab"
+txId := "d1f473ab9845130ca3cf1c4880ac093af87720b4df0de1f344c701a5d07ecaa3"
 tx, err := fetcher.Fetch(txId, true, false)  // testnet, use cache
 if err != nil {
     panic(err)
 }
 
-// Transaction implements String() for easy printing
-fmt.Println(tx)
+// Verify each input
+for i, input := range tx.Inputs {
+    // Fetch the previous transaction
+    prevTxId := fmt.Sprintf("%x", input.PrevTx)
+    prevTx, err := fetcher.Fetch(prevTxId, true, false)
+    if err != nil {
+        panic(err)
+    }
+
+    // Get the previous output's ScriptPubKey
+    prevOutput := prevTx.Outputs[input.PrevIdx]
+
+    // Calculate signature hash for this input
+    z := tx.SigHash(i, prevOutput.ScriptPubKey)
+
+    // Combine ScriptSig + ScriptPubKey
+    combinedScript := input.ScriptSig.Combine(prevOutput.ScriptPubKey)
+
+    // Evaluate the script!
+    valid := combinedScript.Evaluate(z)
+    fmt.Printf("Input %d: %v\n", i, valid)
+}
+```
+
+### Evaluating Bitcoin Scripts
+
+```go
+// Simple arithmetic script: OP_2 OP_DUP OP_DUP OP_MUL OP_ADD OP_6 OP_EQUAL
+// Tests: 2^2 + 2 = 6
+
+scriptSigHex := []byte{0x01, 0x52}  // OP_2
+scriptSig, _ := script.ParseScript(bytes.NewReader(scriptSigHex))
+
+scriptPubKeyHex := []byte{0x06, 0x76, 0x76, 0x95, 0x93, 0x56, 0x87}
+scriptPubKey, _ := script.ParseScript(bytes.NewReader(scriptPubKeyHex))
+
+combined := scriptSig.Combine(scriptPubKey)
+result := combined.Evaluate([]byte{})
+fmt.Printf("Result: %v\n", result)  // true
 ```
 
 ## Project Structure
 
 ```
 go-bitcoin/
-├── main.go
+├── main.go                      # Transaction verification demo
 ├── go.mod
 ├── README.md
 └── internal/
@@ -144,19 +196,21 @@ go-bitcoin/
     │   ├── elliptic_curve.go   # Generic elliptic curve operations
     │   ├── field_elements.go    # Finite field arithmetic
     │   ├── secp256k1.go        # Bitcoin's secp256k1 curve
-    │   └── signature.go         # ECDSA signature with DER encoding
+    │   └── signature.go         # ECDSA signature with DER/SEC parsing
     ├── encoding/
     │   ├── base58.go            # Base58 and Base58Check encoding
     │   ├── hash.go              # Hash256 and Hash160 functions
     │   └── varints.go           # Variable-length integer encoding
     ├── keys/
-    │   └── private_key.go       # Private/public key management
+    │   └── keys.go              # Private/public key management
     ├── script/
-    │   └── script.go            # Bitcoin Script parsing and serialization
+    │   ├── script.go            # Bitcoin Script parsing and serialization
+    │   ├── opcodes.go           # Script execution engine and opcodes
+    │   └── exercise_test.go     # Script test cases (arithmetic, SHA-1 collision)
     └── transactions/
-        ├── transaction.go       # Transaction structure and operations
+        ├── transaction.go       # Transaction structure and SigHash
         ├── txinputs.go          # TxIn and TxOut types
-        └── fetch.go             # Transaction fetching from network
+        └── fetch.go             # Transaction fetching and legacy detection
 ```
 
 ## Implementation Notes
@@ -165,8 +219,11 @@ go-bitcoin/
 - Cryptographically secure random number generation via `crypto/rand`
 - All operations use big-endian byte order (Bitcoin standard)
 - Follows idiomatic Go patterns (composition over inheritance)
-- Implements Bitcoin's legacy P2PKH address format
+- **Validates real Bitcoin transactions** from the blockchain using full Script evaluation
+- Implements Bitcoin's legacy P2PKH (Pay-to-Public-Key-Hash) format
+- Stack-based Script VM with complete opcode support
 - RIPEMD-160 via `golang.org/x/crypto` (legacy hash, required for Bitcoin)
+- Comprehensive test suite including SHA-1 collision detection (SHAttered attack)
 
 ## Standards Implemented
 
@@ -178,19 +235,18 @@ go-bitcoin/
 
 ## Next Steps
 
-- Chapter 6: Script Evaluation
-  - Execute Bitcoin Script opcodes
-  - Stack-based operation engine
-  - Implement common script patterns (P2PKH, P2SH)
-- Chapter 7: Transaction Signing
+- Chapter 7: Transaction Creation and Signing
   - Create transactions from scratch
-  - Sign transaction inputs
-  - Verify transaction signatures
+  - Sign transaction inputs with proper SigHash
+  - Build P2PKH transactions
+  - Transaction fee calculation
 - Chapter 8+: Advanced Topics
   - Bloom filters
   - Merkle trees
+  - Simplified Payment Verification (SPV)
   - Network communication
   - Blockchain validation
+  - SegWit implementation (BIP 141, 143, 144)
 
 ## Development
 
@@ -201,10 +257,13 @@ This is a learning project following "Programming Bitcoin" by Jimmy Song. The go
 - `github.com/btcsuite/btcutil` - Bitcoin utility functions
 
 ```bash
-# Run the example
+# Verify real Bitcoin transactions from testnet
 go run main.go
 
-# Run tests (coming soon)
+# Run Script tests (arithmetic, SHA-1 collision, number encoding)
+go test -v ./internal/script/
+
+# Run all tests
 go test ./...
 
 # Dependencies

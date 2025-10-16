@@ -2,7 +2,9 @@ package eccmath
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"math/big"
 )
 
@@ -20,6 +22,72 @@ func NewSignature(r, s int) Signature {
 
 func (s Signature) String() string {
 	return fmt.Sprintf("Signature(0x%064x, 0x%064x)", s.r, s.s)
+}
+
+func ParseSignature(reader io.Reader) (Signature, error) {
+	// check for 0x30 DER sequence marker
+	marker := make([]byte, 1)
+	n, err := reader.Read(marker)
+	if err != nil || n != 1 {
+		return Signature{}, fmt.Errorf("failed to read DER marker: %w", err)
+	}
+	if marker[0] != 0x30 {
+		return Signature{}, errors.New("missing 0x30 DER marker")
+	}
+
+	// read total length byte -- don't actually use it
+	lengthBuf := make([]byte, 1)
+	n, err = reader.Read(lengthBuf)
+	if err != nil || n != 1 {
+		return Signature{}, fmt.Errorf("failed to read total length: %w", err)
+	}
+
+	// Parse r
+	if _, err := io.ReadFull(reader, marker); err != nil {
+		return Signature{}, fmt.Errorf("failed to read r INTEGER marker: %w", err)
+	}
+	if marker[0] != 0x02 {
+		return Signature{}, errors.New("missing 0x02 INTEGER marker for r")
+	}
+
+	if _, err := io.ReadFull(reader, lengthBuf); err != nil {
+		return Signature{}, fmt.Errorf("failed to read r length: %w", err)
+	}
+	rLen := int(lengthBuf[0])
+
+	rBytes := make([]byte, rLen)
+	if _, err := io.ReadFull(reader, rBytes); err != nil {
+		return Signature{}, fmt.Errorf("failed to read r bytes: %w", err)
+	}
+
+	// no need to strip leading zeroes if padding was used
+	r := new(big.Int).SetBytes(rBytes)
+
+	// Parse s
+	if _, err := io.ReadFull(reader, marker); err != nil {
+		return Signature{}, fmt.Errorf("failed to read s INTEGER marker: %w", err)
+	}
+	if marker[0] != 0x02 {
+		return Signature{}, errors.New("missing 0x02 INTEGER marker for s")
+	}
+
+	if _, err := io.ReadFull(reader, lengthBuf); err != nil {
+		return Signature{}, fmt.Errorf("failed to read s length: %w", err)
+	}
+	sLen := int(lengthBuf[0])
+
+	sBytes := make([]byte, sLen)
+	if _, err := io.ReadFull(reader, sBytes); err != nil {
+		return Signature{}, fmt.Errorf("failed to read s bytes: %w", err)
+	}
+
+	// no need to strip leading zeroes if padding was used
+	s := new(big.Int).SetBytes(sBytes)
+
+	return Signature{
+		r: r,
+		s: s,
+	}, nil
 }
 
 func (s Signature) Serialize() []byte {

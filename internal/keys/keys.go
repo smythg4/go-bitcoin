@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"go-bitcoin/internal/eccmath"
 	"go-bitcoin/internal/encoding"
+	"io"
 	"math/big"
 )
+
+type PublicKey = eccmath.S256Point
 
 type PrivateKey struct {
 	secret *big.Int
@@ -24,9 +27,14 @@ func NewPrivateKey(secret *big.Int) *PrivateKey {
 	}
 }
 
-func (pk *PrivateKey) PublicKey() eccmath.S256Point {
+func (pk *PrivateKey) PublicKey() PublicKey {
 	point := pk.group.ScalarBaseMultiply(pk.secret)
 	return eccmath.NewS256Point(point, pk.group)
+}
+
+func (pk *PrivateKey) SignHash(hash []byte) (eccmath.Signature, error) {
+	z := new(big.Int).SetBytes(hash)
+	return pk.Sign(z)
 }
 
 func (pk *PrivateKey) Sign(z *big.Int) (eccmath.Signature, error) {
@@ -54,4 +62,23 @@ func (pk *PrivateKey) Serialize(compressed, testnet bool) string {
 	}
 
 	return encoding.EncodeBase58Checksum(result)
+}
+
+func ParsePublicKey(r io.Reader) (*PublicKey, error) {
+	bc := eccmath.NewBitcoin()
+
+	// create a temporary point
+	tempPoint := eccmath.NewS256Point(bc.G, bc)
+
+	// deserialize
+	secBytes, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	point, err := tempPoint.Deserialize(secBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse SEC pubkey: %w", err)
+	}
+
+	return &point, nil
 }

@@ -8,48 +8,6 @@ import (
 	"io"
 )
 
-// Script Op Codes
-const (
-	OP_O         byte = 0x00
-	OP_PUSHDATA1 byte = 0x4c
-	OP_PUSHDATA2 byte = 0x4d
-	OP_PUSHDATA4 byte = 0x4f
-	OP_1NEGATE   byte = 0x4f
-	OP_1         byte = 0x51
-	OP_2         byte = 0x52
-	OP_16        byte = 0x60
-
-	// flow control
-	OP_IF     byte = 0x63
-	OP_NOTIF  byte = 0x64
-	OP_ELSE   byte = 0x67
-	OP_ENDIF  byte = 0x68
-	OP_VERIFY byte = 0x69
-	OP_RETURN byte = 0x6a
-
-	// stack operations
-	OP_DUP   byte = 0x76
-	OP_DROP  byte = 0x75
-	OP_2DROP byte = 0x6d
-	OP_SWAP  byte = 0x7c
-
-	// comparison
-	OP_EQUAL       byte = 0x87
-	OP_EQUALVERIFY byte = 0x88
-
-	// arithmetic
-	OP_ADD byte = 0x93
-
-	// crypto
-	OP_RIPEMD160     byte = 0xa6
-	OP_SHA1          byte = 0xa7
-	OP_SHA256        byte = 0xa8
-	OP_HASH160       byte = 0xa9
-	OP_HASH256       byte = 0xaa
-	OP_CHECKSIG      byte = 0xac
-	OP_CHECKMULTISIG byte = 0xae
-)
-
 type ScriptCommand struct {
 	Opcode byte
 	Data   []byte
@@ -57,12 +15,12 @@ type ScriptCommand struct {
 }
 
 type Script struct {
-	commandStack []ScriptCommand
+	CommandStack []ScriptCommand
 }
 
 func NewScript(cmds []ScriptCommand) Script {
 	return Script{
-		commandStack: cmds,
+		CommandStack: cmds,
 	}
 }
 
@@ -95,7 +53,7 @@ func ParseScript(r io.Reader) (Script, error) {
 			}
 
 			// add as data
-			s.commandStack = append(s.commandStack, ScriptCommand{
+			s.CommandStack = append(s.CommandStack, ScriptCommand{
 				Data:   buf,
 				IsData: true,
 			})
@@ -117,7 +75,7 @@ func ParseScript(r io.Reader) (Script, error) {
 				}
 
 				// add as data
-				s.commandStack = append(s.commandStack, ScriptCommand{
+				s.CommandStack = append(s.CommandStack, ScriptCommand{
 					Data:   buf,
 					IsData: true,
 				})
@@ -137,7 +95,7 @@ func ParseScript(r io.Reader) (Script, error) {
 				}
 
 				// add as data
-				s.commandStack = append(s.commandStack, ScriptCommand{
+				s.CommandStack = append(s.CommandStack, ScriptCommand{
 					Data:   buf,
 					IsData: true,
 				})
@@ -157,14 +115,14 @@ func ParseScript(r io.Reader) (Script, error) {
 				}
 
 				// add as data
-				s.commandStack = append(s.commandStack, ScriptCommand{
+				s.CommandStack = append(s.CommandStack, ScriptCommand{
 					Data:   buf,
 					IsData: true,
 				})
 				count += uint64(n + 4)
 			default:
 				// just another op_code to push onto the stack
-				s.commandStack = append(s.commandStack, ScriptCommand{
+				s.CommandStack = append(s.CommandStack, ScriptCommand{
 					Opcode: currentByte,
 					IsData: false,
 				})
@@ -180,7 +138,7 @@ func ParseScript(r io.Reader) (Script, error) {
 func (s *Script) Serialize() ([]byte, error) {
 	var result bytes.Buffer
 
-	for _, cmd := range s.commandStack {
+	for _, cmd := range s.CommandStack {
 		if cmd.IsData {
 			dataLen := len(cmd.Data)
 
@@ -245,4 +203,81 @@ func (s *Script) Serialize() ([]byte, error) {
 		return nil, fmt.Errorf("script serialization error: varint length - %w", err)
 	}
 	return append(length, serialized...), nil
+}
+
+func (s Script) Combine(scriptPubKey Script) Script {
+	// used to stack ScriptSig with ScriptPubKey
+	// check that s is ScriptSig?
+
+	combined := make([]ScriptCommand, 0, len(s.CommandStack)+len(scriptPubKey.CommandStack))
+	combined = append(combined, s.CommandStack...)
+	combined = append(combined, scriptPubKey.CommandStack...)
+	return Script{
+		CommandStack: combined,
+	}
+}
+
+func (s *Script) Evaluate(sighash []byte) bool {
+	engine := NewScriptEngine(*s)
+	return engine.Execute(sighash)
+}
+
+func encodeNum(n int64) []byte {
+	// converts a Go int64 to Bitcoin Script's little-endian signed integer format
+	if n == 0 {
+		return []byte{}
+	}
+	absN := n
+	negative := n < 0
+	if negative {
+		absN = -n
+	}
+
+	result := []byte{}
+	for absN > 0 {
+		result = append(result, byte(absN&0xff))
+		absN >>= 8
+	}
+
+	// if the high bit is set, add an extra byte for the sign
+	if result[len(result)-1]&0x80 != 0 {
+		if negative {
+			result = append(result, 0x80)
+		} else {
+			result = append(result, 0x00)
+		}
+	} else if negative {
+		// set the sign bit on the last byte
+		result[len(result)-1] |= 0x80
+	}
+
+	return result
+}
+
+func decodeNum(data []byte) int64 {
+	// converts Bitcoin Script's little-endian signed integer format to Go's int64
+	if len(data) == 0 {
+		return 0
+	}
+
+	// check sign bit (high bit of last byte)
+	negative := data[len(data)-1]&0x80 != 0
+
+	// convert from little-endian bytes to int64
+	var result int64
+	for i := len(data) - 1; i >= 0; i-- {
+		result <<= 8
+		if i == len(data)-1 {
+			// strip sign bit from last byte
+			result |= int64(data[i] & 0x7f)
+		} else {
+			result |= int64(data[i])
+		}
+	}
+
+	if negative {
+		return -result
+	}
+
+	return result
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"go-bitcoin/internal/encoding"
+	"go-bitcoin/internal/script"
 	"io"
 	"slices"
 )
@@ -170,4 +171,53 @@ func ParseTransaction(r io.Reader) (Transaction, error) {
 		Outputs:  txouts,
 		Locktime: locktime,
 	}, nil
+}
+
+func (t *Transaction) SigHash(inputIndex int, prevScriptPubKey script.Script) []byte {
+	// create a modified transaction for signing
+	// 1. for the input at inputIndex, replace ScriptSig with prevScriptPubKey
+	// 2. for all other inputs, set ScriptSig to empty
+
+	// make a copy of inputs with modifications
+	modifiedInputs := make([]TxIn, len(t.Inputs))
+	for i, input := range t.Inputs {
+		modifiedInputs[i] = TxIn{
+			PrevTx:   input.PrevTx,
+			PrevIdx:  input.PrevIdx,
+			Sequence: input.Sequence,
+		}
+
+		if i == inputIndex {
+			// this is the input we're signing - use prevScriptPubKey
+			modifiedInputs[i].ScriptSig = prevScriptPubKey
+		} else {
+			// all other inputs get empty script
+			modifiedInputs[i].ScriptSig = script.NewScript([]script.ScriptCommand{})
+		}
+	}
+
+	// create modified transaction
+	modifiedTx := Transaction{
+		Version:   t.Version,
+		Inputs:    modifiedInputs,
+		Outputs:   t.Outputs,
+		Locktime:  t.Locktime,
+		IsTestnet: t.IsTestnet,
+	}
+
+	// serialize the modified transaction
+	serialized, err := modifiedTx.Serialize()
+	if err != nil {
+		panic(err) // <-- fix this!
+	}
+
+	// append sighash type (SIGHASH_ALL  = 0x01000000)
+	sighashType := make([]byte, 4)
+	binary.LittleEndian.PutUint32(sighashType, 1)
+	serialized = append(serialized, sighashType...)
+
+	// double SHA256
+	hash := encoding.Hash256(serialized)
+
+	return hash
 }
