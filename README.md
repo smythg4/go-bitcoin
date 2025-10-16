@@ -6,7 +6,8 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
 
 **Chapter 3: Elliptic Curve Cryptography** ✅
 **Chapter 4: Serialization** ✅
-**Chapter 5: Transactions** (next)
+**Chapter 5: Transactions** ✅
+**Chapter 6: Script** (next)
 
 ## Features
 
@@ -60,48 +61,75 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
 - Testnet addresses (starts with `m` or `n`)
 - Support for both compressed and uncompressed public keys
 
+### Variable-Length Integers (`internal/encoding`)
+- **VarInt Encoding**: Compact integer encoding used throughout Bitcoin protocol
+  - 1-byte for values < 0xfd
+  - 3-byte for values < 0x10000 (0xfd prefix)
+  - 5-byte for values < 0x100000000 (0xfe prefix)
+  - 9-byte for larger values (0xff prefix)
+- Efficient serialization/deserialization from io.Reader
+
+### Bitcoin Script (`internal/script`)
+- Script command parsing and serialization
+- Support for data push operations (1-75 bytes, PUSHDATA1/2/4)
+- Opcode definitions (OP_DUP, OP_HASH160, OP_EQUALVERIFY, OP_CHECKSIG, etc.)
+- Clean separation of data elements vs opcodes using ScriptCommand type
+
+### Transaction Handling (`internal/transactions`)
+- **Transaction Structure**: Version, inputs, outputs, locktime
+- **TxIn (Transaction Input)**:
+  - Previous transaction hash (with endianness handling)
+  - Previous output index
+  - ScriptSig (signature script)
+  - Sequence number
+- **TxOut (Transaction Output)**:
+  - Amount in satoshis
+  - ScriptPubKey (locking script)
+- **Transaction Serialization/Deserialization**: Full round-trip support
+- **Transaction ID Calculation**: Hash256 with proper byte reversal
+- **Transaction Fetching**: Download and parse real transactions from Blockstream API
+- **SegWit Support**: Detects and strips SegWit marker bytes for legacy parsing
+- **UTXO Chain Traversal**: Follow transaction inputs to previous outputs
+
 ## Example Usage
 
+### Generating Keys and Addresses
+
 ```go
-package main
+// Create a private key from a secret
+secret := big.NewInt(0xdeadbeef54321)
+privateKey := keys.NewPrivateKey(secret)
 
-import (
-    "fmt"
-    "go-bitcoin/internal/keys"
-    "math/big"
-)
+// Generate public key
+publicKey := privateKey.PublicKey()
 
-func main() {
-    // Create a private key from a secret
-    secret := big.NewInt(0xdeadbeef54321)
-    privateKey := keys.NewPrivateKey(secret)
+// Generate Bitcoin addresses
+mainnetAddr := publicKey.Address(true, false)  // compressed, mainnet
+testnetAddr := publicKey.Address(true, true)   // compressed, testnet
 
-    // Generate public key
-    publicKey := privateKey.PublicKey()
+fmt.Printf("Mainnet address: %s\n", mainnetAddr)
+fmt.Printf("Testnet address: %s\n", testnetAddr)
 
-    // Generate Bitcoin addresses
-    mainnetAddr := publicKey.Address(true, false)  // compressed, mainnet
-    testnetAddr := publicKey.Address(true, true)   // compressed, testnet
+// Export private key in WIF format
+wif := privateKey.Serialize(true, false)  // compressed, mainnet
+fmt.Printf("Private key (WIF): %s\n", wif)
+```
 
-    fmt.Printf("Mainnet address: %s\n", mainnetAddr)
-    fmt.Printf("Testnet address: %s\n", testnetAddr)
+### Fetching and Parsing Transactions
 
-    // Export private key in WIF format
-    wif := privateKey.Serialize(true, false)  // compressed, mainnet
-    fmt.Printf("Private key (WIF): %s\n", wif)
+```go
+// Create transaction fetcher
+fetcher := transactions.NewTxFetcher()
 
-    // Sign a message
-    z := big.NewInt(1234567890)
-    sig, _ := privateKey.Sign(z)
-
-    // Verify signature
-    valid := publicKey.Verify(z, sig)
-    fmt.Printf("Signature valid: %v\n", valid)
-
-    // Serialize signature in DER format
-    derSig := sig.Serialize()
-    fmt.Printf("DER signature: %x\n", derSig)
+// Fetch a real testnet transaction
+txId := "e0fc453aa494912627ca3d93c411e8b5f1c8e8d81d5a07af023d45426f224fab"
+tx, err := fetcher.Fetch(txId, true, false)  // testnet, use cache
+if err != nil {
+    panic(err)
 }
+
+// Transaction implements String() for easy printing
+fmt.Println(tx)
 ```
 
 ## Project Structure
@@ -119,9 +147,16 @@ go-bitcoin/
     │   └── signature.go         # ECDSA signature with DER encoding
     ├── encoding/
     │   ├── base58.go            # Base58 and Base58Check encoding
-    │   └── hash.go              # Hash256 and Hash160 functions
-    └── keys/
-        └── private_key.go       # Private/public key management
+    │   ├── hash.go              # Hash256 and Hash160 functions
+    │   └── varints.go           # Variable-length integer encoding
+    ├── keys/
+    │   └── private_key.go       # Private/public key management
+    ├── script/
+    │   └── script.go            # Bitcoin Script parsing and serialization
+    └── transactions/
+        ├── transaction.go       # Transaction structure and operations
+        ├── txinputs.go          # TxIn and TxOut types
+        └── fetch.go             # Transaction fetching from network
 ```
 
 ## Implementation Notes
@@ -143,11 +178,19 @@ go-bitcoin/
 
 ## Next Steps
 
-- Chapter 5: Transactions
-  - Transaction structure and serialization
-  - Input and output handling
-  - Script evaluation
-  - Transaction signing and verification
+- Chapter 6: Script Evaluation
+  - Execute Bitcoin Script opcodes
+  - Stack-based operation engine
+  - Implement common script patterns (P2PKH, P2SH)
+- Chapter 7: Transaction Signing
+  - Create transactions from scratch
+  - Sign transaction inputs
+  - Verify transaction signatures
+- Chapter 8+: Advanced Topics
+  - Bloom filters
+  - Merkle trees
+  - Network communication
+  - Blockchain validation
 
 ## Development
 
