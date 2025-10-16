@@ -93,32 +93,26 @@ func (tf *TxFetcher) Fetch(txId string, testNet, fresh bool) (*Transaction, erro
 }
 
 // isLegacyTransaction checks if a transaction uses legacy P2PKH (not SegWit)
+// Uses a fast heuristic: SegWit transactions have empty/short ScriptSigs
 func (tf *TxFetcher) isLegacyTransaction(txId string, testNet bool) (bool, error) {
 	tx, err := tf.Fetch(txId, testNet, false)
 	if err != nil {
 		return false, err
 	}
 
-	// Check each input's previous output
+	// Fast heuristic: SegWit transactions have empty or very short ScriptSigs
+	// Legacy P2PKH ScriptSigs are typically 100+ bytes (sig + pubkey)
 	for _, input := range tx.Inputs {
-		prevTxId := fmt.Sprintf("%x", input.PrevTx)
-		prevTx, err := tf.Fetch(prevTxId, testNet, false)
-		if err != nil {
-			return false, err
-		}
+		scriptSigLen := len(input.ScriptSig.CommandStack)
 
-		// Get the ScriptPubKey from the previous output
-		prevOutput := prevTx.Outputs[input.PrevIdx]
-		script := prevOutput.ScriptPubKey
-
-		// Legacy P2PKH starts with OP_DUP (0x76)
-		// SegWit P2WPKH starts with OP_0 (0x00)
-		if len(script.CommandStack) == 0 {
+		// SegWit typically has 0 commands in ScriptSig (witness is separate)
+		// Legacy P2PKH has 2 commands: <sig> <pubkey>
+		if scriptSigLen < 2 {
 			return false, nil
 		}
 
-		firstCmd := script.CommandStack[0]
-		if firstCmd.IsData || firstCmd.Opcode != 0x76 { // Not OP_DUP
+		// Double check: if we have commands, first should be data (signature)
+		if !input.ScriptSig.CommandStack[0].IsData {
 			return false, nil
 		}
 	}
