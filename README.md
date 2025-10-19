@@ -8,7 +8,7 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
 **Chapter 4: Serialization** ✅
 **Chapter 5: Transactions** ✅
 **Chapter 6: Script** ✅
-**Chapter 7: Transaction Signing** (next)
+**Chapter 7: Transaction Signing & P2SH** ✅
 
 ## Features
 
@@ -56,11 +56,15 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
 - **Hash256**: Double SHA-256 (used for checksums and block hashing)
 - **Hash160**: SHA-256 followed by RIPEMD-160 (used for addresses)
 
-### Bitcoin Address Generation (`internal/eccmath`)
-- P2PKH (Pay-to-Public-Key-Hash) address generation
-- Mainnet addresses (starts with `1`)
-- Testnet addresses (starts with `m` or `n`)
-- Support for both compressed and uncompressed public keys
+### Bitcoin Address Generation (`internal/eccmath`, `internal/script`)
+- **P2PKH (Pay-to-Public-Key-Hash)** address generation
+  - Mainnet addresses (starts with `1`)
+  - Testnet addresses (starts with `m` or `n`)
+  - Support for both compressed and uncompressed public keys
+- **P2SH (Pay-to-Script-Hash)** address generation
+  - Mainnet addresses (starts with `3`)
+  - Testnet addresses (starts with `2`)
+  - Generate addresses from arbitrary scripts (multisig, timelocks, etc.)
 
 ### Variable-Length Integers (`internal/encoding`)
 - **VarInt Encoding**: Compact integer encoding used throughout Bitcoin protocol
@@ -81,8 +85,14 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
 - **Cryptographic Operations**:
   - OP_SHA1, OP_SHA256, OP_HASH160, OP_HASH256
   - OP_CHECKSIG, OP_CHECKSIGVERIFY with full ECDSA verification
+  - OP_CHECKMULTISIG with sliding window signature matching for m-of-n multisig
 - **Numeric Constants**: OP_0 through OP_16, OP_1NEGATE
 - **P2PKH Script Validation**: Complete Pay-to-Public-Key-Hash transaction verification
+- **P2SH Script Validation**: Pay-to-Script-Hash (BIP 16) with two-phase execution
+  - Automatic P2SH pattern detection during script execution
+  - RedeemScript extraction and parsing from ScriptSig
+  - Hash verification and redeemScript command injection
+  - Full support for P2SH-wrapped multisig transactions
 - **Script Combining**: Merge ScriptSig with ScriptPubKey for evaluation
 
 ### Transaction Handling (`internal/transactions`)
@@ -98,13 +108,19 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
 - **Transaction Serialization/Deserialization**: Full round-trip support
 - **Transaction ID Calculation**: Hash256 with proper byte reversal
 - **Signature Hash (SigHash)**: Complete signature hash calculation for transaction signing/verification
+  - Automatic P2SH detection with redeemScript extraction
+  - Uses redeemScript (not P2SH wrapper) for P2SH sighash calculation per BIP 16
+  - Standard P2PKH sighash for non-P2SH transactions
 - **Transaction Fetching**: Download and parse real transactions from Blockstream API
   - Automatic legacy transaction detection (filters SegWit)
   - Multi-block search capability
   - Caching for efficient repeated fetches
 - **SegWit Support**: Detects and strips SegWit marker bytes for legacy parsing
 - **UTXO Chain Traversal**: Follow transaction inputs to previous outputs
-- **Transaction Verification**: Full P2PKH transaction validation from the blockchain
+- **Transaction Verification**: Full transaction validation from the blockchain
+  - P2PKH (Pay-to-Public-Key-Hash) validation
+  - P2SH (Pay-to-Script-Hash) validation with multisig support
+  - Low-S signature enforcement (BIP 62) for transaction malleability prevention
 
 ## Example Usage
 
@@ -184,6 +200,29 @@ result := combined.Evaluate([]byte{})
 fmt.Printf("Result: %v\n", result)  // true
 ```
 
+### Verifying P2SH Multisig Transactions
+
+```go
+// Verify a real 2-of-3 multisig P2SH transaction from testnet
+fetcher := transactions.NewTxFetcher()
+
+// This transaction spends from a P2SH address
+txId := "fa65bc5fa0ee39e012282701a4ce378474183a330487e839cd1b65b398d7646e"
+tx, err := fetcher.Fetch(txId, true, false)
+if err != nil {
+    panic(err)
+}
+
+// Verify the transaction - automatically handles P2SH
+valid, err := tx.Verify()
+if err != nil {
+    panic(err)
+}
+
+fmt.Printf("P2SH Transaction Valid: %v\n", valid)  // true
+// The redeemScript (2-of-3 multisig) is automatically extracted and executed
+```
+
 ## Project Structure
 
 ```
@@ -231,18 +270,19 @@ go-bitcoin/
 - **DER (Distinguished Encoding Rules)**: Signature serialization
 - **Base58Check**: Address encoding with checksum
 - **WIF (Wallet Import Format)**: Private key serialization
-- **BIP-13**: Pay-to-Script-Hash (P2SH) address format (coming soon)
+- **BIP-13**: Pay-to-Script-Hash (P2SH) address format
+- **BIP-16**: Pay-to-Script-Hash execution semantics
+- **BIP-62**: Low-S signature enforcement for transaction malleability prevention
 
 ## Next Steps
 
-- Chapter 7: Transaction Creation and Signing
-  - Create transactions from scratch
-  - Sign transaction inputs with proper SigHash
-  - Build P2PKH transactions
-  - Transaction fee calculation
-- Chapter 8+: Advanced Topics
+- Chapter 8: Blocks
+  - Block header parsing and validation
+  - Proof of work verification
+  - Target/difficulty calculations
+  - Merkle root computation
+- Chapter 9+: Advanced Topics
   - Bloom filters
-  - Merkle trees
   - Simplified Payment Verification (SPV)
   - Network communication
   - Blockchain validation

@@ -118,6 +118,41 @@ func (se *ScriptEngine) push(cmd ScriptCommand) {
 	se.stack = append(se.stack, cmd)
 }
 
+func IsP2sh(triplet []ScriptCommand) bool {
+	return triplet[0].Opcode == OP_HASH160 && len(triplet[1].Data) == 20 && triplet[2].Opcode == OP_EQUAL
+}
+
+func (se *ScriptEngine) P2sh(redeemScript, hash ScriptCommand) bool {
+	// we know first command is OP_HASH160
+	ok := se.OpHash160()
+	if !ok {
+		return false
+	}
+
+	se.push(hash) // hash from the cmd stack
+
+	// the next command will be OP_EQUAL -- I used OP_EQUALVERIFY to knock out the final check of 0/1
+	ok = se.OpEqualVerify()
+	if !ok {
+		return false
+	}
+	// Prepend varint length before parsing
+	redeemScriptData := redeemScript.Data
+	length, err := encoding.EncodeVarInt(uint64(len(redeemScriptData)))
+	if err != nil {
+		return false
+	}
+	scriptWithLength := append(length, redeemScriptData...)
+	parsedRs, err := ParseScript(bytes.NewBuffer(scriptWithLength)) // do I need to prepend the length?
+	if err != nil {
+		return false
+	}
+
+	se.commands = append(se.commands, parsedRs.CommandStack...)
+
+	return true
+}
+
 // execute the entire script
 func (se *ScriptEngine) Execute(z []byte) bool {
 	se.z = z
@@ -126,6 +161,19 @@ func (se *ScriptEngine) Execute(z []byte) bool {
 		cmd := se.commands[se.pc]
 		se.pc++
 
+		if se.pc+2 <= len(se.commands) && IsP2sh(se.commands[se.pc-1:se.pc+2]) {
+			// look for BIP0016 sequence of commands
+			redeemScript, ok := se.peek() // copy the redeemScript for later use
+			if !ok {
+				return false
+			}
+			hash := se.commands[se.pc]
+			if !se.P2sh(redeemScript, hash) {
+				return false
+			}
+			se.pc += 2 // already advanced it 1 earlier
+			continue
+		}
 		if cmd.IsData {
 			// data elements just get pushed
 			se.push(cmd)
@@ -161,6 +209,9 @@ func isAllZeros(data []byte) bool {
 
 func (se *ScriptEngine) ExecuteCommand(cmd ScriptCommand) bool {
 	switch cmd.Opcode {
+	case OP_O: // 0x00 - already defined in your constants
+		se.pushData([]byte{}) // OP_0 pushes empty byte array
+		return true
 	case OP_DUP:
 		return se.OpDup()
 	case OP_2DUP:
@@ -195,6 +246,8 @@ func (se *ScriptEngine) ExecuteCommand(cmd ScriptCommand) bool {
 		return se.OpNotIf()
 	case OP_CHECKSIG:
 		return se.OpCheckSig()
+	case OP_CHECKMULTISIG:
+		return se.OpCheckMultiSig()
 	case OP_CHECKSIGVERIFY:
 		return se.OpCheckSigVerify()
 	case OP_NOT:
@@ -337,6 +390,25 @@ func (se *ScriptEngine) OpNotIf() bool {
 	return true
 }
 
+func checkSigHelper(pubkeyCmd, sigCmd ScriptCommand, z *big.Int) bool {
+	if len(sigCmd.Data) == 0 {
+		return false
+	}
+	derSig := sigCmd.Data[:len(sigCmd.Data)-1] // strip sighash type byte
+
+	sig, err := eccmath.ParseSignature(bytes.NewReader(derSig))
+	if err != nil {
+		return false
+	}
+
+	pubkey, err := keys.ParsePublicKey(bytes.NewReader(pubkeyCmd.Data))
+	if err != nil {
+		return false
+	}
+
+	return pubkey.Verify(z, sig)
+}
+
 func (se *ScriptEngine) OpCheckSig() bool {
 	// pop public key
 	pubkeyCmd, ok := se.pop()
@@ -350,34 +422,10 @@ func (se *ScriptEngine) OpCheckSig() bool {
 		return false
 	}
 
-	// handle empty signature case
-	if len(sigCmd.Data) == 0 {
-		se.pushData([]byte{}) // no sig -> push false
-		return true
-	}
-
-	// strip last byte (sighash type, usually 0x01 for SIGHASH_ALL)
-	derSig := sigCmd.Data[:len(sigCmd.Data)-1]
-
-	// parse DER signature
-	sig, err := eccmath.ParseSignature(bytes.NewReader(derSig))
-	if err != nil {
-		se.pushData([]byte{}) // invalid sig -> push false
-		return true
-	}
-
-	// parse SEC public key
-	pubkey, err := keys.ParsePublicKey(bytes.NewReader(pubkeyCmd.Data))
-	if err != nil {
-		se.pushData([]byte{}) // invalid pubkey -> push false
-		return true
-	}
-
 	// convert sighash to big.Int
 	z := new(big.Int).SetBytes(se.z)
 
-	// verify signature
-	if pubkey.Verify(z, sig) {
+	if checkSigHelper(pubkeyCmd, sigCmd, z) {
 		se.pushData([]byte{0x01}) // verified! -> push true
 	} else {
 		se.pushData([]byte{}) // verification failed -> push false
@@ -388,6 +436,75 @@ func (se *ScriptEngine) OpCheckSig() bool {
 
 func (se *ScriptEngine) OpCheckSigVerify() bool {
 	return se.OpCheckSig() && se.OpVerify()
+}
+
+func (se *ScriptEngine) OpCheckMultiSig() bool {
+	top, ok := se.pop()
+	if !ok {
+		return false
+	}
+
+	// get n public keys off the stack
+	n := int(decodeNum(top.Data))
+	if len(se.stack) < n+1 {
+		return false
+	}
+	secPubkeys := make([]ScriptCommand, 0, n)
+	for i := 0; i < n; i++ {
+		top, ok = se.pop()
+		if !ok {
+			return false // should never happen
+		}
+		secPubkeys = append(secPubkeys, top)
+	}
+
+	// get m signatures off the stack
+	top, ok = se.pop()
+	if !ok {
+		return false
+	}
+	m := int(decodeNum(top.Data))
+	if len(se.stack) < m+1 {
+		return false
+	}
+	derSignatures := make([]ScriptCommand, 0, m)
+	for i := 0; i < m; i++ {
+		top, ok = se.pop()
+		if !ok {
+			return false
+		}
+		derSignatures = append(derSignatures, top)
+	}
+	// off by one filler element
+	top, ok = se.pop()
+	if !ok {
+		return false
+	}
+
+	// TODO: do the verifications
+	z := new(big.Int).SetBytes(se.z)
+
+	sigIndex := 0
+	pubkeyIndex := 0
+
+	// try to match all m signatures
+	for sigIndex < m && pubkeyIndex < n {
+		if checkSigHelper(secPubkeys[pubkeyIndex], derSignatures[sigIndex], z) {
+			// signature matched this pubkey - move to next signature
+			sigIndex++
+		}
+		// always move to the next pubkey
+		pubkeyIndex++
+	}
+
+	// success if we match all m signatures
+	if sigIndex == m {
+		se.pushData([]byte{0x01})
+	} else {
+		se.pushData([]byte{0x00})
+	}
+
+	return true
 }
 
 func (se *ScriptEngine) OpEqual() bool {

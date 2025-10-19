@@ -281,3 +281,45 @@ func decodeNum(data []byte) int64 {
 
 	return result
 }
+
+func P2pkhScript(h160 []byte) Script {
+	// take a hash160 and returns the p2pkh script ScriptPubKey
+	c1 := ScriptCommand{
+		Opcode: OP_DUP,
+		IsData: false,
+	}
+	c2 := ScriptCommand{
+		Opcode: OP_HASH160,
+		IsData: false,
+	}
+	c3 := ScriptCommand{
+		IsData: true,
+		Data:   h160,
+	}
+	c4 := ScriptCommand{
+		Opcode: OP_EQUALVERIFY,
+		IsData: false,
+	}
+	c5 := ScriptCommand{
+		Opcode: OP_CHECKSIG,
+		IsData: false,
+	}
+	cmds := []ScriptCommand{c1, c2, c3, c4, c5}
+	return NewScript(cmds)
+}
+
+func P2pkhAddress(h160 []byte, testNet bool) string {
+	prefix := 0x00
+	if testNet {
+		prefix = 0x6f // testnet prefix
+	}
+	return encoding.EncodeBase58Checksum(append([]byte{byte(prefix)}, h160...))
+}
+
+func P2shAddress(h160 []byte, testNet bool) string {
+	prefix := 0x05
+	if testNet {
+		prefix = 0xc4 // testnet prefix
+	}
+	return encoding.EncodeBase58Checksum(append([]byte{byte(prefix)}, h160...))
+}

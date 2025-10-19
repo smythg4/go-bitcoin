@@ -16,6 +16,14 @@ type TxIn struct {
 	Sequence  uint32
 }
 
+func NewTxIn(prevTx []byte, prevIdx, sequence uint32) TxIn {
+	return TxIn{
+		PrevTx:   prevTx,
+		PrevIdx:  prevIdx,
+		Sequence: sequence,
+	}
+}
+
 func (t TxIn) String() string {
 	return fmt.Sprintf("%x:%d", t.PrevTx, t.PrevIdx)
 }
@@ -94,6 +102,33 @@ func (t *TxIn) Serialize() ([]byte, error) {
 	}
 
 	return result.Bytes(), nil
+}
+
+func (t *TxIn) fetchTx(testNet bool) (*Transaction, error) {
+	fetcher := NewTxFetcher()
+	// PrevTx is stored in display order (big-endian)
+	// Can use directly for API call
+	hex := fmt.Sprintf("%x", t.PrevTx)
+	return fetcher.Fetch(hex, testNet, false)
+}
+
+func (t *TxIn) Value(testNet bool) (uint64, error) {
+	// get the output value by looking up the tx hash.
+	// returns amount in Satoshi
+	tx, err := t.fetchTx(testNet)
+	if err != nil {
+		return 0, err
+	}
+	return tx.Outputs[t.PrevIdx].Amount, nil
+}
+
+func (t *TxIn) ScriptPubKey(testNet bool) (script.Script, error) {
+	// get the ScriptPubKey by looking up the tx hash. Returns a Script object.
+	tx, err := t.fetchTx(testNet)
+	if err != nil {
+		return script.Script{}, err
+	}
+	return tx.Outputs[t.PrevIdx].ScriptPubKey, nil
 }
 
 type TxOut struct {

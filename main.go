@@ -3,88 +3,57 @@ package main
 import (
 	"fmt"
 	"go-bitcoin/internal/transactions"
-	"log"
 	"time"
 )
 
 func main() {
-	fmt.Println("=== Verifying Real Bitcoin Transactions ===")
+
 	fetcher := transactions.NewTxFetcher()
-
-	// Fetch up to 3 recent legacy transactions from testnet
-	// Check 15 tx per block, check last 10 blocks, 60 second timeout
-	fmt.Println("Fetching recent legacy transactions from testnet (skipping SegWit)...")
-	txIds, err := fetcher.FetchRecentLegacyTxIds(true, 3, 15, 10, 60*time.Second)
+	txIds, err := fetcher.FetchAddressTransactions("2MtmgCyjRyf8QcpLiU9BpQLrmEvFKRMFCG9", true)
 	if err != nil {
-		fmt.Printf("Error fetching recent txIds: %v\n", err)
-		log.Fatal()
+		panic(err)
 	}
 
-	if len(txIds) == 0 {
-		fmt.Println("\nNo legacy transactions found in recent blocks (all SegWit)")
-		fmt.Println("Legacy P2PKH transactions are rare on modern testnet. Try again later or use mainnet.")
-		return
-	}
-
-	fmt.Printf("Found %d legacy transaction(s)\n\n", len(txIds))
+	fmt.Printf("Found %d transactions for address\n", len(txIds))
 
 	// Verify each transaction
-	successCount := 0
-	failCount := 0
-
-	for txNum, txId := range txIds {
-		fmt.Printf("=== Transaction %d/%d ===\n", txNum+1, len(txIds))
+	for i, txId := range txIds {
+		fmt.Printf("\n=== Transaction %d/%d ===\n", i+1, len(txIds))
 		fmt.Printf("TxID: %s\n", txId)
+		time.Sleep(2 * time.Second)
 
 		tx, err := fetcher.Fetch(txId, true, false)
 		if err != nil {
-			fmt.Printf("Error fetching transaction: %v\n\n", err)
-			failCount++
+			fmt.Printf("Error fetching: %v\n", err)
 			continue
 		}
 
-		// Verify each input
-		allValid := true
-		for i, input := range tx.Inputs {
-			// fetch the previous transaction
-			prevTxId := fmt.Sprintf("%x", input.PrevTx)
-			prevTx, err := fetcher.Fetch(prevTxId, true, false)
-			if err != nil {
-				fmt.Printf("  Input %d: Error fetching previous tx: %v\n", i, err)
-				allValid = false
-				continue
-			}
-
-			// get the previous output's ScriptPubKey
-			prevOutput := prevTx.Outputs[input.PrevIdx]
-
-			// calculate signature hash for this input
-			z := tx.SigHash(i, prevOutput.ScriptPubKey)
-
-			// combine ScriptSig + ScriptPubKey
-			combinedScript := input.ScriptSig.Combine(prevOutput.ScriptPubKey)
-
-			// evaluate
-			valid := combinedScript.Evaluate(z)
-			if valid {
-				fmt.Printf("  Input %d: ✓ VALID\n", i)
-			} else {
-				fmt.Printf("  Input %d: ✗ INVALID\n", i)
-				allValid = false
-			}
+		valid, err := tx.Verify()
+		if err != nil {
+			fmt.Printf("Error verifying: %v\n", err)
+			continue
 		}
 
-		if allValid {
-			fmt.Printf("Result: ✓ All inputs verified\n\n")
-			successCount++
+		if valid {
+			fmt.Println("✓ Transaction is VALID!")
+			// Add this to see what type it is
+			for i, input := range tx.Inputs {
+				scriptPubKey, _ := input.ScriptPubKey(true)
+				fmt.Printf("  Input %d ScriptPubKey commands: %d\n", i,
+					len(scriptPubKey.CommandStack))
+				fmt.Printf("  Input %d ScriptSig commands: %d\n", i,
+					len(input.ScriptSig.CommandStack))
+			}
 		} else {
-			fmt.Printf("Result: ✗ Verification failed\n\n")
-			failCount++
+			fmt.Println("✗ Transaction is INVALID")
+			// Add: let's see what the scripts look like
+			for i, input := range tx.Inputs {
+				scriptPubKey, _ := input.ScriptPubKey(true)
+				fmt.Printf("  Input %d ScriptPubKey commands: %d\n", i,
+					len(scriptPubKey.CommandStack))
+				fmt.Printf("  Input %d ScriptSig commands: %d\n", i,
+					len(input.ScriptSig.CommandStack))
+			}
 		}
 	}
-
-	fmt.Printf("=== Summary ===\n")
-	fmt.Printf("Total: %d transactions\n", len(txIds))
-	fmt.Printf("Verified: %d\n", successCount)
-	fmt.Printf("Failed: %d\n", failCount)
 }

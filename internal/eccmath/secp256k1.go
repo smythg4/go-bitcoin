@@ -82,6 +82,12 @@ func (s *Secp256k1Group) Sign(key *big.Int, z *big.Int) (Signature, error) {
 	sig_s := new(big.Int).Mul(z_plus_r_priv, k_inv)
 	sig_s.Mod(sig_s, s.N)
 
+	// Enforce low-S: if s > N/2, use N - s instead
+	halfN := new(big.Int).Div(s.N, big.NewInt(2))
+	if sig_s.Cmp(halfN) > 0 {
+		sig_s = new(big.Int).Sub(s.N, sig_s)
+	}
+
 	return Signature{r: r, s: sig_s}, nil
 }
 
@@ -242,6 +248,7 @@ func (p *S256Point) Deserialize(data []byte) (S256Point, error) {
 }
 
 func (p *S256Point) Address(compressed, testnet bool) string {
+	// this is a bit redundant. I have functions also written in script.go
 	data := p.Serialize(compressed)
 	h160 := encoding.Hash160(data)
 	prefix := 0x00

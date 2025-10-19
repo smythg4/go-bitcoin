@@ -233,3 +233,33 @@ func (tf *TxFetcher) FetchRecentLegacyTxIds(testNet bool, maxCount int, maxCheck
 
 	return legacyTxIds, nil
 }
+
+// FetchAddressTransactions fetches all transaction IDs for a given address
+func (tf *TxFetcher) FetchAddressTransactions(address string, testNet bool) ([]string, error) {
+	url := fmt.Sprintf("%s/address/%s/txs", tf.GetUrl(testNet), address)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch transactions for address: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+
+	// The API returns an array of transaction objects
+	var txs []struct {
+		TxID string `json:"txid"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&txs); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	txIds := make([]string, len(txs))
+	for i, tx := range txs {
+		txIds[i] = tx.TxID
+	}
+
+	return txIds, nil
+}
