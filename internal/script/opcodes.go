@@ -218,7 +218,7 @@ func (se *ScriptEngine) ExecuteCommand(cmd ScriptCommand) bool {
 		return se.Op2Dup()
 	case OP_1, OP_2, OP_3, OP_4, OP_5, OP_6, OP_7, OP_8, OP_9, OP_10, OP_11, OP_12, OP_13, OP_14, OP_15, OP_16:
 		num := int64(cmd.Opcode - 0x50)
-		se.pushData(encodeNum(num))
+		se.pushData(EncodeNum(num))
 		return true
 	case OP_ADD:
 		return se.OpAdd()
@@ -445,7 +445,7 @@ func (se *ScriptEngine) OpCheckMultiSig() bool {
 	}
 
 	// get n public keys off the stack
-	n := int(decodeNum(top.Data))
+	n := int(DecodeNum(top.Data))
 	if len(se.stack) < n+1 {
 		return false
 	}
@@ -463,7 +463,7 @@ func (se *ScriptEngine) OpCheckMultiSig() bool {
 	if !ok {
 		return false
 	}
-	m := int(decodeNum(top.Data))
+	m := int(DecodeNum(top.Data))
 	if len(se.stack) < m+1 {
 		return false
 	}
@@ -562,9 +562,9 @@ func (se *ScriptEngine) OpAdd() bool {
 		return false
 	}
 
-	numA := decodeNum(a.Data)
-	numB := decodeNum(b.Data)
-	result := encodeNum(numA + numB)
+	numA := DecodeNum(a.Data)
+	numB := DecodeNum(b.Data)
+	result := EncodeNum(numA + numB)
 
 	se.pushData(result)
 	return true
@@ -580,9 +580,9 @@ func (se *ScriptEngine) OpSub() bool {
 		return false
 	}
 
-	numA := decodeNum(a.Data)
-	numB := decodeNum(b.Data)
-	result := encodeNum(numA - numB)
+	numA := DecodeNum(a.Data)
+	numB := DecodeNum(b.Data)
+	result := EncodeNum(numA - numB)
 
 	se.pushData(result)
 	return true
@@ -598,9 +598,9 @@ func (se *ScriptEngine) OpMul() bool {
 		return false
 	}
 
-	numA := decodeNum(a.Data)
-	numB := decodeNum(b.Data)
-	result := encodeNum(numA * numB)
+	numA := DecodeNum(a.Data)
+	numB := DecodeNum(b.Data)
+	result := EncodeNum(numA * numB)
 
 	se.pushData(result)
 	return true
@@ -612,12 +612,12 @@ func (se *ScriptEngine) OpNot() bool {
 		return false
 	}
 
-	num := decodeNum(item.Data)
+	num := DecodeNum(item.Data)
 
 	if num == 0 {
-		se.pushData(encodeNum(1))
+		se.pushData(EncodeNum(1))
 	} else {
-		se.pushData(encodeNum(0))
+		se.pushData(EncodeNum(0))
 	}
 	return true
 }

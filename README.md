@@ -8,7 +8,11 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
 **Chapter 4: Serialization** ✅
 **Chapter 5: Transactions** ✅
 **Chapter 6: Script** ✅
-**Chapter 7: Transaction Signing & P2SH** ✅
+**Chapter 7: Transaction Creation and Validation** ✅
+**Chapter 8: Pay-to-Script-Hash (P2SH)** ✅
+**Chapter 9: Blocks** ✅
+**Chapter 10: Networking** ✅
+**Chapter 11: Simplified Payment Verification (SPV)** (in progress)
 
 ## Features
 
@@ -122,6 +126,45 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
   - P2SH (Pay-to-Script-Hash) validation with multisig support
   - Low-S signature enforcement (BIP 62) for transaction malleability prevention
 
+### Block Handling (`internal/block`)
+- **Block Structure**: Version, previous block hash, merkle root, timestamp, bits, nonce
+- **Block Parsing/Serialization**: Full block header parsing from binary format
+- **Proof of Work Verification**: Validates block hash meets difficulty target
+- **Difficulty Calculation**:
+  - Bits field to target conversion (compact format)
+  - Target to difficulty conversion
+  - Difficulty adjustment every 2016 blocks
+  - New bits calculation based on time differential
+- **Block ID Generation**: Double SHA-256 hash with proper byte reversal
+- **Genesis Block Support**: Mainnet and testnet genesis blocks
+- **Block Chain Validation**: Validates proof of work and difficulty adjustments
+
+### Networking (`internal/network`)
+- **Bitcoin P2P Protocol**: Full network message handling
+- **Network Envelope**: Magic bytes, command, payload length, checksum
+- **Message Types**:
+  - Version handshake (protocol version negotiation)
+  - Verack acknowledgment
+  - Ping/Pong keepalive
+  - GetHeaders (request block headers)
+  - Headers response (batch header delivery)
+- **Connection Management**:
+  - TCP connection handling with timeouts
+  - Concurrent read/write loops with goroutines
+  - Message routing with dedicated channels
+  - Graceful shutdown with sync.WaitGroup
+- **Auto-responses**: Automatic ping/pong and version/verack handling
+- **Block Header Download**: Download and validate blockchain headers from mainnet peers
+- **DNS Seed Support**: Peer discovery via DNS seeds
+
+### Merkle Trees (`internal/encoding`)
+- **Merkle Tree Construction**: Build complete merkle trees from transaction hashes
+- **Merkle Root Calculation**: Recursive parent level computation with odd-node duplication
+- **Tree Navigation**: Cursor-based tree traversal (up, left, right)
+- **Merkle Block Parsing**: Parse merkleblock messages for SPV (BIP 37)
+- **Bit Field Expansion**: Convert compact flag bytes to bit arrays for tree reconstruction
+- **SPV Proof Support**: Infrastructure for simplified payment verification (in progress)
+
 ## Example Usage
 
 ### Generating Keys and Addresses
@@ -227,7 +270,7 @@ fmt.Printf("P2SH Transaction Valid: %v\n", valid)  // true
 
 ```
 go-bitcoin/
-├── main.go                      # Transaction verification demo
+├── main.go                      # Network demo (header download & validation)
 ├── go.mod
 ├── README.md
 └── internal/
@@ -239,17 +282,28 @@ go-bitcoin/
     ├── encoding/
     │   ├── base58.go            # Base58 and Base58Check encoding
     │   ├── hash.go              # Hash256 and Hash160 functions
-    │   └── varints.go           # Variable-length integer encoding
+    │   ├── varints.go           # Variable-length integer encoding
+    │   ├── merkle.go            # Merkle tree construction and navigation
+    │   └── merkle_test.go       # Merkle tree tests
     ├── keys/
     │   └── keys.go              # Private/public key management
     ├── script/
     │   ├── script.go            # Bitcoin Script parsing and serialization
     │   ├── opcodes.go           # Script execution engine and opcodes
     │   └── exercise_test.go     # Script test cases (arithmetic, SHA-1 collision)
-    └── transactions/
-        ├── transaction.go       # Transaction structure and SigHash
-        ├── txinputs.go          # TxIn and TxOut types
-        └── fetch.go             # Transaction fetching and legacy detection
+    ├── transactions/
+    │   ├── transaction.go       # Transaction structure and SigHash
+    │   ├── txinputs.go          # TxIn and TxOut types
+    │   └── fetch.go             # Transaction fetching and legacy detection
+    ├── block/
+    │   └── block.go             # Block header parsing and proof of work
+    └── network/
+        ├── node.go              # P2P node with concurrent message handling
+        ├── network.go           # Network envelope parsing
+        ├── version.go           # Version message
+        ├── verack.go            # Verack message
+        ├── pong.go              # Pong message
+        └── blockheader.go       # GetHeaders and Headers messages
 ```
 
 ## Implementation Notes
@@ -259,8 +313,10 @@ go-bitcoin/
 - All operations use big-endian byte order (Bitcoin standard)
 - Follows idiomatic Go patterns (composition over inheritance)
 - **Validates real Bitcoin transactions** from the blockchain using full Script evaluation
+- **Connects to Bitcoin mainnet** and downloads/validates block headers
 - Implements Bitcoin's legacy P2PKH (Pay-to-Public-Key-Hash) format
 - Stack-based Script VM with complete opcode support
+- Concurrent P2P networking with goroutines and channels
 - RIPEMD-160 via `golang.org/x/crypto` (legacy hash, required for Bitcoin)
 - Comprehensive test suite including SHA-1 collision detection (SHAttered attack)
 
@@ -272,21 +328,26 @@ go-bitcoin/
 - **WIF (Wallet Import Format)**: Private key serialization
 - **BIP-13**: Pay-to-Script-Hash (P2SH) address format
 - **BIP-16**: Pay-to-Script-Hash execution semantics
+- **BIP-37**: Connection Bloom filtering (merkleblock parsing for SPV)
 - **BIP-62**: Low-S signature enforcement for transaction malleability prevention
 
 ## Next Steps
 
-- Chapter 8: Blocks
-  - Block header parsing and validation
-  - Proof of work verification
-  - Target/difficulty calculations
-  - Merkle root computation
-- Chapter 9+: Advanced Topics
-  - Bloom filters
-  - Simplified Payment Verification (SPV)
-  - Network communication
-  - Blockchain validation
-  - SegWit implementation (BIP 141, 143, 144)
+- Chapter 11: Simplified Payment Verification (SPV) - **IN PROGRESS**
+  - Merkle path generation
+  - Merkle proof verification
+  - Light client implementation
+- Chapter 12: Bloom Filters
+  - Bloom filter creation and testing
+  - Filtered block retrieval (BIP 37)
+  - Privacy-preserving SPV
+- Chapter 13: SegWit
+  - Segregated Witness implementation (BIP 141, 143, 144)
+  - Witness data handling
+  - Native SegWit address support
+- Chapter 14: Advanced Topics
+  - Payment channels
+  - Advanced scripting
 
 ## Development
 
@@ -297,11 +358,14 @@ This is a learning project following "Programming Bitcoin" by Jimmy Song. The go
 - `github.com/btcsuite/btcutil` - Bitcoin utility functions
 
 ```bash
-# Verify real Bitcoin transactions from testnet
+# Connect to Bitcoin mainnet and download block headers
 go run main.go
 
 # Run Script tests (arithmetic, SHA-1 collision, number encoding)
 go test -v ./internal/script/
+
+# Run Merkle tree tests (tree construction, navigation)
+go test -v ./internal/encoding/ -run TestMerkle
 
 # Run all tests
 go test ./...

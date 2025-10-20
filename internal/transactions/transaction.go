@@ -362,3 +362,27 @@ func (t *Transaction) SignInputs(privKey keys.PrivateKey, compressed bool) error
 	}
 	return nil
 }
+
+func (t *Transaction) isCoinbase() bool {
+	// coinbase transactions must have exactly one input
+	if len(t.Inputs) != 1 {
+		return false
+	}
+	// the one input must have a previous transaction of 32 bytes of 00
+	if !slices.Equal(t.Inputs[0].PrevTx, bytes.Repeat([]byte{0x00}, 32)) {
+		return false
+	}
+	// the one input must have a previous index of ffffffff
+	if t.Inputs[0].PrevIdx != 0xffffffff {
+		return false
+	}
+	return true
+}
+
+func (t *Transaction) coinbaseHeight() int64 {
+	if !t.isCoinbase() {
+		return -1
+	}
+	element := t.Inputs[0].ScriptSig.CommandStack[0]
+	return script.DecodeNum(element.Data)
+}

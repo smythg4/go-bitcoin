@@ -222,7 +222,7 @@ func (s *Script) Evaluate(sighash []byte) bool {
 	return engine.Execute(sighash)
 }
 
-func encodeNum(n int64) []byte {
+func EncodeNum(n int64) []byte {
 	// converts a Go int64 to Bitcoin Script's little-endian signed integer format
 	if n == 0 {
 		return []byte{}
@@ -254,7 +254,7 @@ func encodeNum(n int64) []byte {
 	return result
 }
 
-func decodeNum(data []byte) int64 {
+func DecodeNum(data []byte) int64 {
 	// converts Bitcoin Script's little-endian signed integer format to Go's int64
 	if len(data) == 0 {
 		return 0
