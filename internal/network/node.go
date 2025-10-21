@@ -10,11 +10,6 @@ import (
 
 type MessageHandler func(NetworkEnvelope)
 
-type waiter struct {
-	commands []string
-	response chan NetworkEnvelope
-}
-
 type SimpleNode struct {
 	Addr    NetAddr
 	conn    net.Conn
@@ -29,9 +24,7 @@ type SimpleNode struct {
 	handlers map[string]MessageHandler
 
 	// dedicated channels for messages we need to wait on
-	versionCh chan NetworkEnvelope
-	verackCh  chan NetworkEnvelope
-	headersCh chan NetworkEnvelope
+	channelsMap map[string]chan NetworkEnvelope
 }
 
 func NewSimpleNode(host string, port int, testNet, logging bool) (*SimpleNode, error) {
@@ -61,10 +54,15 @@ func NewSimpleNode(host string, port int, testNet, logging bool) (*SimpleNode, e
 		handlers: make(map[string]MessageHandler),
 
 		// dedicated channels for message types (buffered to prevent drops)
-		versionCh: make(chan NetworkEnvelope, 1),
-		verackCh:  make(chan NetworkEnvelope, 1),
-		headersCh: make(chan NetworkEnvelope, 1),
+		channelsMap: make(map[string]chan NetworkEnvelope),
 	}
+
+	sn.RegisterChannel("version", 1)
+	sn.RegisterChannel("verack", 1)
+	sn.RegisterChannel("headers", 1)
+	sn.RegisterChannel("block", 1)
+	sn.RegisterChannel("merkleblock", 50)
+	sn.RegisterChannel("tx", 10)
 	sn.wg.Add(3)
 
 	go sn.readLoop()
@@ -81,13 +79,13 @@ func NewSimpleNode(host string, port int, testNet, logging bool) (*SimpleNode, e
 	})
 
 	// Auto-respond to version with verack (for incoming connections)
-	sn.OnMessage("version", func(env NetworkEnvelope) {
-		if sn.Logging {
-			fmt.Println("Auto-responding to version with verack")
-		}
-		verack := &VerackMessage{}
-		sn.Send(verack)
-	})
+	// sn.OnMessage("version", func(env NetworkEnvelope) {
+	// 	if sn.Logging {
+	// 		fmt.Println("Auto-responding to version with verack")
+	// 	}
+	// 	verack := &VerackMessage{}
+	// 	sn.Send(verack)
+	// })
 
 	// Log received verack (no response needed)
 	sn.OnMessage("verack", func(env NetworkEnvelope) {
@@ -115,7 +113,17 @@ func NewSimpleNode(host string, port int, testNet, logging bool) (*SimpleNode, e
 		}
 	})
 
+	sn.OnMessage("inv", func(env NetworkEnvelope) {
+		if sn.Logging {
+			fmt.Println("Peer sent inv")
+		}
+	})
+
 	return sn, nil
+}
+
+func (sn *SimpleNode) RegisterChannel(name string, bufSize int) {
+	sn.channelsMap[name] = make(chan NetworkEnvelope, bufSize)
 }
 
 func (sn *SimpleNode) readLoop() {
@@ -135,7 +143,7 @@ func (sn *SimpleNode) readLoop() {
 				return
 			}
 			if sn.Logging {
-				fmt.Printf("receiving: %s\n", env)
+				fmt.Printf("receiving: %s\n", env.Command)
 			}
 
 			select {
@@ -204,27 +212,22 @@ func (sn *SimpleNode) Send(msg Message) error {
 func (sn *SimpleNode) messageLoop() {
 	defer func() {
 		sn.wg.Done()
-		close(sn.headersCh)
-		close(sn.verackCh)
-		close(sn.versionCh)
+		for _, ch := range sn.channelsMap {
+			close(ch)
+		}
 	}()
 	for env := range sn.incoming {
 		// fan out to dedicated channels
-		switch env.Command {
-		case "version":
+		if ch, ok := sn.channelsMap[env.Command]; ok {
+			// avoid blocking
 			select {
-			case sn.versionCh <- env:
+			case ch <- env:
+				// message sent successfully
 			default:
-			}
-		case "verack":
-			select {
-			case sn.verackCh <- env:
-			default:
-			}
-		case "headers":
-			select {
-			case sn.headersCh <- env:
-			default:
+				// channel full - drop message or log
+				if sn.Logging {
+					fmt.Printf("Warning: channel full for %s, dropping message\n", env.Command)
+				}
 			}
 		}
 
@@ -247,8 +250,8 @@ func (sn *SimpleNode) Handshake() error {
 	}
 
 	// blocks on receiving a version and verack response
-	<-sn.versionCh
-	<-sn.verackCh
+	<-sn.channelsMap["version"]
+	<-sn.channelsMap["verack"]
 
 	// this explicit send solves the previous race condition
 	// consider removing the automated verack response
@@ -263,21 +266,35 @@ func (sn *SimpleNode) Handshake() error {
 	return nil
 }
 
-func (sn *SimpleNode) ReceiveHeaders() (NetworkEnvelope, error) {
-	timeout := time.NewTimer(30 * time.Second)
+func (sn *SimpleNode) Receive(command string) (NetworkEnvelope, error) {
+	timeout := time.NewTimer(5 * time.Second)
 	defer timeout.Stop()
-
+	var ch chan NetworkEnvelope
+	var ok bool
+	if ch, ok = sn.channelsMap[command]; !ok {
+		return NetworkEnvelope{}, errors.New("unknown command")
+	}
 	select {
-	case env, ok := <-sn.headersCh:
+	case env, ok := <-ch:
 		if !ok {
 			return NetworkEnvelope{}, errors.New("connection closed")
 		}
 		return env, nil
 	case <-timeout.C:
-		return NetworkEnvelope{}, errors.New("timeout waiting for headers")
+		return NetworkEnvelope{}, fmt.Errorf("timeout waiting for %s", command)
 	case <-sn.done:
 		return NetworkEnvelope{}, errors.New("connection closed")
 	}
+}
+
+func (sn *SimpleNode) RequestHeaders(prevHash [32]byte) error {
+	// TODO
+	return nil
+}
+
+func (sn *SimpleNode) RequestMerkleBlock(blockHash [32]byte) error {
+	// TODO
+	return nil
 }
 
 func (sn *SimpleNode) Close() error {

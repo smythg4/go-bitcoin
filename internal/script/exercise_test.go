@@ -96,22 +96,22 @@ func TestNumberEncoding(t *testing.T) {
 		{1, []byte{0x01}},
 		{2, []byte{0x02}},
 		{127, []byte{0x7f}},
-		{128, []byte{0x80, 0x00}},    // needs extra byte because 0x80 has sign bit set
-		{255, []byte{0xff, 0x00}},    // needs extra byte
-		{256, []byte{0x00, 0x01}},    // little-endian
-		{-1, []byte{0x81}},           // sign bit set
-		{-127, []byte{0xff}},         // 0x7f with sign bit = 0xff
-		{-128, []byte{0x80, 0x80}},   // needs extra byte
+		{128, []byte{0x80, 0x00}},  // needs extra byte because 0x80 has sign bit set
+		{255, []byte{0xff, 0x00}},  // needs extra byte
+		{256, []byte{0x00, 0x01}},  // little-endian
+		{-1, []byte{0x81}},         // sign bit set
+		{-127, []byte{0xff}},       // 0x7f with sign bit = 0xff
+		{-128, []byte{0x80, 0x80}}, // needs extra byte
 	}
 
 	for _, test := range tests {
-		encoded := encodeNum(test.num)
+		encoded := EncodeNum(test.num)
 		if !bytes.Equal(encoded, test.expected) {
 			t.Errorf("encodeNum(%d) = %x, expected %x", test.num, encoded, test.expected)
 		}
 
 		// Test round-trip
-		decoded := decodeNum(encoded)
+		decoded := DecodeNum(encoded)
 		if decoded != test.num {
 			t.Errorf("decodeNum(encodeNum(%d)) = %d, expected %d", test.num, decoded, test.num)
 		}
@@ -135,7 +135,7 @@ func TestNumberDecoding(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		decoded := decodeNum(test.data)
+		decoded := DecodeNum(test.data)
 		if decoded != test.expected {
 			t.Errorf("decodeNum(%x) = %d, expected %d", test.data, decoded, test.expected)
 		}

@@ -1,6 +1,7 @@
 package encoding
 
 import (
+	"errors"
 	"fmt"
 	"math"
 )
@@ -34,9 +35,108 @@ func NewMerkleTree(hashes [][]byte) (*MerkleTree, error) {
 	return mt, nil
 }
 
-// func PopulateTree(flagBits []byte, hashes [][]byte) (*MerkleTree, error) {
-// 	for
-// }
+func NewEmptyMerkleTree(total int) (*MerkleTree, error) {
+	md := int(math.Ceil(math.Log2(float64(total))))
+	mt := &MerkleTree{
+		total:        total,
+		maxDepth:     md,
+		nodes:        make([][][]byte, md+1),
+		currentDepth: 0,
+		currentIndex: 0,
+	}
+	for i := 0; i < md+1; i++ {
+		numItems := int(math.Ceil(float64(mt.total) / math.Pow(2, float64(md-i))))
+		mt.nodes[i] = make([][]byte, numItems)
+	}
+
+	return mt, nil
+}
+
+func (mt *MerkleTree) PopulateTree(flagBits []byte, hashes [][32]byte) error {
+	// takes a tree previously generated with NewEmptyMerkleTree and fills it in
+	// using minimum hashes from a MerkleBlock
+	hashIdx := 0
+	flagIdx := 0
+
+	// recursive tree traversal closure
+	var traverse func() ([]byte, error)
+	traverse = func() ([]byte, error) {
+		if flagIdx >= len(flagBits) {
+			return nil, errors.New("ran out of flags bits")
+		}
+
+		flag := flagBits[flagIdx]
+		flagIdx++
+
+		if mt.IsLeaf() {
+			// at a leaf - hash always provided
+			if hashIdx >= len(hashes) {
+				return nil, errors.New("ran out of hashes")
+			}
+			hash := hashes[hashIdx]
+			hashIdx++
+			mt.SetCurrentNode(hash)
+			return hash[:], nil
+		}
+
+		// internal node
+		if flag == 0 {
+			// don't descend - hash provided
+			if hashIdx >= len(hashes) {
+				return nil, errors.New("ran out of hashes")
+			}
+			hash := hashes[hashIdx]
+			hashIdx++
+			mt.SetCurrentNode(hash)
+			return hash[:], nil
+		}
+
+		// flag == 1: descend to children
+
+		// go left
+		mt.Left()
+		leftHash, err := traverse()
+		if err != nil {
+			return nil, err
+		}
+		mt.Up() // back to parent
+
+		// go right or duplicate left
+		var rightHash []byte
+		if mt.RightExists() {
+			mt.Right()
+			rightHash, err = traverse()
+			if err != nil {
+				return nil, err
+			}
+			mt.Up() // back to parent
+		} else {
+			// odd number of nodes - duplicate left
+			rightHash = leftHash
+		}
+
+		// compute parent hash
+		parent := MerkleParent(leftHash, rightHash)
+		mt.SetCurrentNode([32]byte(parent))
+
+		return parent, nil
+	}
+
+	_, err := traverse()
+	if err != nil {
+		return err
+	}
+
+	// verify that we used all hashes and flags
+	if hashIdx != len(hashes) {
+		return fmt.Errorf("didn't use all hashes. used: %d, have %d", hashIdx, len(hashes))
+	}
+	// if flagIdx != len(flagBits) {
+	// 	return fmt.Errorf("didn't use all flag bits. used: %d, have %d", flagIdx, len(flagBits))
+	// }
+
+	return nil
+}
 
 func (mt *MerkleTree) Up() {
 	if mt.currentDepth == 0 {

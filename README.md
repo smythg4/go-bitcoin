@@ -12,7 +12,8 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
 **Chapter 8: Pay-to-Script-Hash (P2SH)** ✅
 **Chapter 9: Blocks** ✅
 **Chapter 10: Networking** ✅
-**Chapter 11: Simplified Payment Verification (SPV)** (in progress)
+**Chapter 11: Simplified Payment Verification (SPV)** ✅
+**Chapter 12: Bloom Filters** ✅
 
 ## Features
 
@@ -59,6 +60,7 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
 ### Hashing (`internal/encoding`)
 - **Hash256**: Double SHA-256 (used for checksums and block hashing)
 - **Hash160**: SHA-256 followed by RIPEMD-160 (used for addresses)
+- **MurmurHash3**: 32-bit MurmurHash3 implementation for bloom filters (BIP 37)
 
 ### Bitcoin Address Generation (`internal/eccmath`, `internal/script`)
 - **P2PKH (Pay-to-Public-Key-Hash)** address generation
@@ -148,22 +150,40 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
   - Ping/Pong keepalive
   - GetHeaders (request block headers)
   - Headers response (batch header delivery)
+  - FilterLoad (bloom filter transmission - BIP 37)
+  - GetData (request filtered blocks or transactions)
+  - MerkleBlock (filtered block with merkle proof)
+  - Tx (transaction data)
 - **Connection Management**:
   - TCP connection handling with timeouts
   - Concurrent read/write loops with goroutines
-  - Message routing with dedicated channels
+  - Message routing with dedicated channels per message type
+  - Buffered channels to prevent message loss
   - Graceful shutdown with sync.WaitGroup
-- **Auto-responses**: Automatic ping/pong and version/verack handling
-- **Block Header Download**: Download and validate blockchain headers from mainnet peers
-- **DNS Seed Support**: Peer discovery via DNS seeds
+- **Auto-responses**: Automatic ping/pong handling
+- **Block Header Download**: Download and validate blockchain headers from peers
 
-### Merkle Trees (`internal/encoding`)
+### Merkle Trees & SPV (`internal/encoding`, `internal/network`)
 - **Merkle Tree Construction**: Build complete merkle trees from transaction hashes
 - **Merkle Root Calculation**: Recursive parent level computation with odd-node duplication
 - **Tree Navigation**: Cursor-based tree traversal (up, left, right)
-- **Merkle Block Parsing**: Parse merkleblock messages for SPV (BIP 37)
-- **Bit Field Expansion**: Convert compact flag bytes to bit arrays for tree reconstruction
-- **SPV Proof Support**: Infrastructure for simplified payment verification (in progress)
+- **Merkle Block Parsing**: Parse merkleblock messages with partial merkle trees (BIP 37)
+- **Merkle Proof Validation**: Reconstruct merkle trees from partial data and verify against block header
+- **Bit Field Handling**: Convert compact flag bytes to bit arrays for tree reconstruction
+- **Flag Bit Traversal**: Navigate merkle tree using flag bits to identify included transactions
+- **Coinbase Transaction Handling**: Proper handling of coinbase-only matches (nodes don't send coinbase txs)
+
+### Bloom Filters (`internal/network`)
+- **Bloom Filter Creation**: Probabilistic data structure with configurable size and hash functions
+- **MurmurHash3 Implementation**: BIP 37-compliant hashing for bloom filter population
+- **Multi-Pattern Matching**: Support for addresses, transaction IDs, outpoints, and arbitrary data
+- **Filter Transmission**: FilterLoad message creation and serialization
+- **SPV Client**: Complete simplified payment verification implementation
+  - Connect to BIP 37-enabled nodes
+  - Filter transactions by address, txid, or outpoints
+  - Receive and validate merkleblocks
+  - Verify transactions without downloading full blockchain
+  - Successfully tested against Bitcoin mainnet (found historic pizza transaction!)
 
 ## Example Usage
 
@@ -266,6 +286,78 @@ fmt.Printf("P2SH Transaction Valid: %v\n", valid)  // true
 // The redeemScript (2-of-3 multisig) is automatically extracted and executed
 ```
 
+### Using the SPV Client (Simplified Payment Verification)
+
+```go
+// Connect to a Bitcoin node that supports BIP 37 bloom filters
+node, _ := network.NewSimpleNode("34.126.115.35", 8333, false, true)
+defer node.Close()
+node.Handshake()
+
+// Watch for payments to a specific address
+address := "17SkEw2md5avVNyYgj6RiXuQKNwkXaxFyQ"
+h160, _ := encoding.DecodeBase58(address)
+
+// Create bloom filter
+bf := network.NewBloomFilter(30, 5, 90210)
+bf.Add(h160)  // Add address to filter
+
+// Send bloom filter to node
+filterload := &network.FilterLoadMessage{
+    Filter: &bf,
+    Flag:   byte(network.BLOOM_UPDATE_ALL),
+}
+node.Send(filterload)
+
+// Request headers starting from a specific block
+startBlock := getBlockHash(57042)  // Block before transaction
+getheaders := network.NewGetHeadersMessage(70015, [][32]byte{startBlock}, nil)
+node.Send(&getheaders)
+
+// Receive headers
+headersEnv, _ := node.Receive("headers")
+headers, _ := network.ParseHeadersMessage(bytes.NewReader(headersEnv.Payload))
+
+// Request filtered blocks
+getdata := network.NewGetDataMessage()
+for _, block := range headers.Blocks {
+    blockHash, _ := block.Hash()
+    var hash [32]byte
+    copy(hash[:], blockHash)
+    getdata.AddData(network.DATA_TYPE_FILTERED_BLOCK, hash)
+}
+node.Send(&getdata)
+
+// Process merkleblocks and transactions
+for {
+    mbEnv, _ := node.Receive("merkleblock")
+    mb, _ := network.ParseMerkleBlock(bytes.NewReader(mbEnv.Payload))
+
+    if !mb.IsValid() {
+        continue  // Invalid merkle proof
+    }
+
+    // Receive matching transactions
+    for i := 0; i < mb.NumHashes; i++ {
+        txEnv, err := node.Receive("tx")
+        if err != nil {
+            break  // Coinbase transaction (not sent)
+        }
+
+        tx, _ := transactions.ParseTransaction(bytes.NewReader(txEnv.Payload))
+
+        // Check if transaction pays to our address
+        for j, output := range tx.Outputs {
+            addr, _ := output.ScriptPubKey.Address(false)
+            if addr == address {
+                fmt.Printf("Found payment: %d satoshis\n", output.Amount)
+                return
+            }
+        }
+    }
+}
+```
+
 ## Project Structure
 
 ```
@@ -303,7 +395,13 @@ go-bitcoin/
         ├── version.go           # Version message
         ├── verack.go            # Verack message
         ├── pong.go              # Pong message
-        └── blockheader.go       # GetHeaders and Headers messages
+        ├── getheaders.go        # GetHeaders and Headers messages
+        ├── bloomfilter.go       # Bloom filter creation and FilterLoad message
+        ├── getdata.go           # GetData message for requesting blocks/txs
+        ├── merkleblock.go       # MerkleBlock parsing and validation
+        ├── generic.go           # Generic message types
+        ├── bloom_test.go        # Bloom filter tests
+        └── spv_test.go          # Full SPV client integration test
 ```
 
 ## Implementation Notes
@@ -333,21 +431,14 @@ go-bitcoin/
 
 ## Next Steps
 
-- Chapter 11: Simplified Payment Verification (SPV) - **IN PROGRESS**
-  - Merkle path generation
-  - Merkle proof verification
-  - Light client implementation
-- Chapter 12: Bloom Filters
-  - Bloom filter creation and testing
-  - Filtered block retrieval (BIP 37)
-  - Privacy-preserving SPV
 - Chapter 13: SegWit
   - Segregated Witness implementation (BIP 141, 143, 144)
   - Witness data handling
-  - Native SegWit address support
+  - Native SegWit address support (bech32)
 - Chapter 14: Advanced Topics
   - Payment channels
-  - Advanced scripting
+  - Timelock transactions (CLTV, CSV)
+  - Advanced scripting patterns
 
 ## Development
 
@@ -361,11 +452,17 @@ This is a learning project following "Programming Bitcoin" by Jimmy Song. The go
 # Connect to Bitcoin mainnet and download block headers
 go run main.go
 
+# Run SPV client test (finds the Bitcoin Pizza transaction!)
+go test -v ./internal/network/ -run TestSPVFlow
+
 # Run Script tests (arithmetic, SHA-1 collision, number encoding)
 go test -v ./internal/script/
 
 # Run Merkle tree tests (tree construction, navigation)
 go test -v ./internal/encoding/ -run TestMerkle
+
+# Run bloom filter tests
+go test -v ./internal/network/ -run TestBloom
 
 # Run all tests
 go test ./...

@@ -10,24 +10,22 @@ import (
 )
 
 type GetHeadersMessage struct {
-	Version    int32
-	NumHashes  uint64
-	StartBlock [32]byte
-	EndBlock   [32]byte
+	Version       int32
+	BlockLocators [][32]byte
+	HashStop      [32]byte
 }
 
-func NewGetHeadersMessage(version int32, numHashes int, startBlock [32]byte, endBlock *[32]byte) (GetHeadersMessage, error) {
-	hashStop := [32]byte{} // all zeroes
-	if endBlock != nil {
-		hashStop = *endBlock
+func NewGetHeadersMessage(version int32, blockLocators [][32]byte, hashStop *[32]byte) GetHeadersMessage {
+	stop := [32]byte{}
+	if hashStop != nil {
+		stop = *hashStop
 	}
 
 	return GetHeadersMessage{
-		Version:    version,
-		NumHashes:  uint64(numHashes),
-		StartBlock: startBlock,
-		EndBlock:   hashStop,
-	}, nil
+		Version:       version,
+		BlockLocators: blockLocators,
+		HashStop:      stop,
+	}
 }
 
 func (g *GetHeadersMessage) Serialize() ([]byte, error) {
@@ -40,7 +38,7 @@ func (g *GetHeadersMessage) Serialize() ([]byte, error) {
 	}
 
 	// write numHashes (varInt)
-	hashes, err := encoding.EncodeVarInt(g.NumHashes)
+	hashes, err := encoding.EncodeVarInt(uint64(len(g.BlockLocators)))
 	if err != nil {
 		return nil, err
 	}
@@ -48,16 +46,20 @@ func (g *GetHeadersMessage) Serialize() ([]byte, error) {
 		return nil, err
 	}
 
-	if _, err := buf.Write(g.StartBlock[:]); err != nil {
+	for _, block := range g.BlockLocators {
+		if _, err := buf.Write(block[:]); err != nil {
+			return nil, err
+		}
+	}
+
+	if _, err := buf.Write(g.HashStop[:]); err != nil {
 		return nil, err
 	}
 
-	if _, err := buf.Write(g.EndBlock[:]); err != nil {
-		return nil, err
-	}
-	if len(buf.Bytes()) != 4+len(hashes)+32+32 {
-		return nil, fmt.Errorf("result must be %d bytes long, got %d bytes", 4+len(hashes)+32+32, len(buf.Bytes()))
-	}
+	// if len(buf.Bytes()) != 4+len(hashes)+32+32 {
+	// 	return nil, fmt.Errorf("result must be %d bytes long, got %d bytes", 4+len(hashes)+32+32, len(buf.Bytes()))
+	// }
+
 	return buf.Bytes(), nil
 }
 

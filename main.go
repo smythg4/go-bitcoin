@@ -61,16 +61,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	for i := 0; i < 100; i++ {
-		getHeaders, err := network.NewGetHeadersMessage(70015, 1, [32]byte(prevHash), nil)
-		if err != nil {
-			log.Fatal(err)
-		}
+	for i := 0; i < 20; i++ {
+		getHeaders := network.NewGetHeadersMessage(70015, [][32]byte{[32]byte(prevHash)}, nil)
+
 		if err := node.Send(&getHeaders); err != nil {
 			log.Fatal(err)
 		}
 		// Wait for headers response
-		env, err := node.ReceiveHeaders()
+		env, err := node.Receive("headers")
 		if err != nil {
 			log.Fatal(err)
 		}

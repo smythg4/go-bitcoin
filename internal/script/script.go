@@ -3,6 +3,7 @@ package script
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"go-bitcoin/internal/encoding"
 	"io"
@@ -322,4 +323,18 @@ func P2shAddress(h160 []byte, testNet bool) string {
 		prefix = 0xc4 // testnet prefix
 	}
 	return encoding.EncodeBase58Checksum(append([]byte{byte(prefix)}, h160...))
+}
+
+func (s *Script) Address(testnet bool) (string, error) {
+	if len(s.CommandStack) < 3 {
+		return "", errors.New("not enough commands")
+	}
+	if IsP2sh(s.CommandStack[0:3]) {
+		h160 := s.CommandStack[1].Data
+		return P2shAddress(h160, testnet), nil
+	} else {
+		// assume p2pkh otherwise
+		h160 := s.CommandStack[2].Data
+		return P2pkhAddress(h160, testnet), nil
+	}
 }

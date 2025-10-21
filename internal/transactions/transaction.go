@@ -31,12 +31,12 @@ func NewTransaction(version uint32, inputs []TxIn, outputs []TxOut, locktime uin
 }
 
 func (t Transaction) String() string {
-	id, _ := t.id()
+	id, _ := t.Id()
 	return fmt.Sprintf("tx: %s\n   version:\t%d\n   tx_ins:\t%v\n   tx_outs:\t%v\n   locktime:\t%d",
 		id, t.Version, t.Inputs, t.Outputs, t.Locktime)
 }
 
-func (t *Transaction) id() (string, error) {
+func (t *Transaction) Id() (string, error) {
 	// Human readable hexadecimal of the transaction hash
 	hash, err := t.hash()
 	if err != nil {

@@ -77,7 +77,7 @@ func (tf *TxFetcher) Fetch(txId string, testNet, fresh bool) (*Transaction, erro
 	}
 
 	// verify txids match
-	fetchId, err := tx.id()
+	fetchId, err := tx.Id()
 	if err != nil {
 		return nil, err
 	}
