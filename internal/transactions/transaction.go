@@ -142,18 +142,18 @@ func (t *Transaction) SerializeSegwit() ([]byte, error) {
 	// returns the byte serialization of the Segwit transaction
 	var result bytes.Buffer
 
-	// marker and flag bytes
-	n, err := result.Write([]byte{0x00, 0x01})
-	if err != nil || n != 2 {
-		return nil, fmt.Errorf("tx serialization error (marker/flag) - %w", err)
-	}
-
 	buf := make([]byte, 4)
 	// version
 	binary.LittleEndian.PutUint32(buf[:4], uint32(t.Version))
-	n, err = result.Write(buf[:4])
+	n, err := result.Write(buf[:4])
 	if err != nil || n != 4 {
 		return nil, fmt.Errorf("tx serialization error (version) - %w", err)
+	}
+
+	// marker and flag bytes
+	n, err = result.Write([]byte{0x00, 0x01})
+	if err != nil || n != 2 {
+		return nil, fmt.Errorf("tx serialization error (marker/flag) - %w", err)
 	}
 
 	// inputs len
@@ -342,7 +342,7 @@ func ParseSegwitTransaction(r io.Reader, version uint32) (Transaction, error) {
 		if err != nil {
 			return Transaction{}, err
 		}
-		items := make([][]byte, numItems)
+		items := make([][]byte, 0, numItems)
 		for j := uint64(0); j < numItems; j++ {
 			itemLen, err := encoding.ReadVarInt(r)
 			if err != nil {
@@ -526,12 +526,44 @@ func (t *Transaction) VerifyInput(inputIndex int) (bool, error) {
 				return false, fmt.Errorf("error generating sighash for index %d: %w", inputIndex, err)
 			}
 			witness = input.Witness
+		} else if redeemScript.IsP2wshScriptPubKey() {
+			command := input.Witness[len(input.Witness)-1]
+			witLenBytes, err := encoding.EncodeVarInt(uint64(len(command)))
+			if err != nil {
+				return false, err
+			}
+			rawWitness := append(witLenBytes, command...)
+			witnessScript, err := script.ParseScript(bytes.NewReader(rawWitness))
+			if err != nil {
+				return false, err
+			}
+			z, err = t.SigHashBIP143(inputIndex, nil, &witnessScript)
+			if err != nil {
+				return false, err
+			}
+			witness = input.Witness
 		} else {
 			z, err = t.SigHashBIP143(inputIndex, &redeemScript, nil)
 			if err != nil {
 				return false, fmt.Errorf("error generating sighash for index %d: %w", inputIndex, err)
 			}
 		}
+	} else if scriptPubKey.IsP2wshScriptPubKey() {
+		command := input.Witness[len(input.Witness)-1]
+		witLenBytes, err := encoding.EncodeVarInt(uint64(len(command)))
+		if err != nil {
+			return false, err
+		}
+		rawWitness := append(witLenBytes, command...)
+		witnessScript, err := script.ParseScript(bytes.NewReader(rawWitness))
+		if err != nil {
+			return false, err
+		}
+		z, err = t.SigHashBIP143(inputIndex, nil, &witnessScript)
+		if err != nil {
+			return false, err
+		}
+		witness = input.Witness
 	} else {
 		// legacy P2PKH or other...
 		z, err = t.SigHash(inputIndex)
@@ -725,7 +757,7 @@ func (t *Transaction) SigHashBIP143(inputIndex int, redeemScript *script.Script,
 }
 
 func (t *Transaction) hashPrevOuts() []byte {
-	if t.cachedHashOutputs == nil {
+	if t.cachedHashPrevOuts == nil {
 		allPrevOuts := []byte{}
 		allSequence := []byte{}
 		buf4 := make([]byte, 4)

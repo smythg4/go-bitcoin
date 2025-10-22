@@ -3,6 +3,7 @@ package script
 import (
 	"bytes"
 	"crypto/sha1"
+	"crypto/sha256"
 	"go-bitcoin/internal/eccmath"
 	"go-bitcoin/internal/encoding"
 	"go-bitcoin/internal/keys"
@@ -14,7 +15,7 @@ const (
 	OP_O         byte = 0x00
 	OP_PUSHDATA1 byte = 0x4c
 	OP_PUSHDATA2 byte = 0x4d
-	OP_PUSHDATA4 byte = 0x4f
+	OP_PUSHDATA4 byte = 0x4e
 	OP_1NEGATE   byte = 0x4f
 	OP_1         byte = 0x51
 	OP_2         byte = 0x52
@@ -80,6 +81,7 @@ type ScriptEngine struct {
 	commands []ScriptCommand
 	pc       int
 	z        []byte
+	witness  [][]byte
 }
 
 func NewScriptEngine(script Script) ScriptEngine {
@@ -122,6 +124,13 @@ func IsP2sh(triplet []ScriptCommand) bool {
 	return triplet[0].Opcode == OP_HASH160 && len(triplet[1].Data) == 20 && triplet[2].Opcode == OP_EQUAL
 }
 
+func IsP2wsh(pair []ScriptCommand) bool {
+	return len(pair) == 2 &&
+		pair[0].Opcode == OP_O &&
+		pair[1].IsData &&
+		len(pair[1].Data) == 32
+}
+
 func (se *ScriptEngine) P2sh(redeemScript, hash ScriptCommand) bool {
 	// we know first command is OP_HASH160
 	ok := se.OpHash160()
@@ -149,6 +158,58 @@ func (se *ScriptEngine) P2sh(redeemScript, hash ScriptCommand) bool {
 	}
 
 	se.commands = append(se.commands, parsedRs.CommandStack...)
+
+	return true
+}
+
+func (se *ScriptEngine) P2wsh(hash256 ScriptCommand) bool {
+	if len(se.witness) == 0 {
+		return false
+	}
+
+	// Last witness item is the witnessScript
+	witnessScript := se.witness[len(se.witness)-1]
+
+	// Validate: SHA256(witnessScript) == hash256
+	actualHash := sha256.Sum256(witnessScript)
+	if !bytes.Equal(actualHash[:], hash256.Data) {
+		return false
+	}
+
+	// Push all witness items except last onto stack
+	for i := 0; i < len(se.witness)-1; i++ {
+		se.pushData(se.witness[i])
+	}
+
+	// Parse witnessScript and inject commands
+	length, err := encoding.EncodeVarInt(uint64(len(witnessScript)))
+	if err != nil {
+		return false
+	}
+	scriptBytes := append(length, witnessScript...)
+	parsedWitnessScript, err := ParseScript(bytes.NewReader(scriptBytes))
+	if err != nil {
+		return false
+	}
+
+	// Inject witnessScript commands into execution
+	se.commands = append(se.commands, parsedWitnessScript.CommandStack...)
+
+	return true
+}
+
+func (se *ScriptEngine) P2wpkh(hash160 ScriptCommand) bool {
+	if len(se.witness) != 2 {
+		return false
+	}
+
+	// Push witness items onto stack
+	se.pushData(se.witness[0]) // signature
+	se.pushData(se.witness[1]) // pubkey
+
+	// Create and inject P2PKH script commands
+	p2pkhScript := P2pkhScript(hash160.Data)
+	se.commands = append(se.commands, p2pkhScript.CommandStack...)
 
 	return true
 }
@@ -182,6 +243,28 @@ func (se *ScriptEngine) Execute(z []byte) bool {
 			if !se.ExecuteCommand(cmd) {
 				return false // opcode failed
 			}
+		}
+
+		// after execution, check stack for witness programs
+		if len(se.stack) == 2 &&
+			len(se.stack[0].Data) == 0 && // OP_O pushes empty bytes
+			len(se.stack[1].Data) == 20 { // P2WPKH
+			hash160, _ := se.pop()
+			se.pop() // remove OP_O
+			if !se.P2wpkh(hash160) {
+				return false
+			}
+			continue
+		}
+		if len(se.stack) == 2 &&
+			len(se.stack[0].Data) == 0 &&
+			len(se.stack[1].Data) == 32 { // P2WSH
+			hash256, _ := se.pop() // add error handling
+			se.pop()               // remove OP_O
+			if !se.P2wsh(hash256) {
+				return false
+			}
+			continue
 		}
 	}
 

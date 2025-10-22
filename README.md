@@ -14,6 +14,9 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
 **Chapter 10: Networking** ✅
 **Chapter 11: Simplified Payment Verification (SPV)** ✅
 **Chapter 12: Bloom Filters** ✅
+**Chapter 13: Segregated Witness (SegWit)** ✅
+
+**🎉 Book Complete!** All chapters from Programming Bitcoin have been successfully implemented and tested.
 
 ## Features
 
@@ -71,6 +74,12 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
   - Mainnet addresses (starts with `3`)
   - Testnet addresses (starts with `2`)
   - Generate addresses from arbitrary scripts (multisig, timelocks, etc.)
+- **P2WPKH (Pay-to-Witness-Public-Key-Hash)** detection and verification
+  - Native SegWit (witness version 0)
+  - 20-byte pubkey hash witness programs
+- **P2WSH (Pay-to-Witness-Script-Hash)** detection and verification
+  - Native SegWit (witness version 0)
+  - 32-byte script hash witness programs
 
 ### Variable-Length Integers (`internal/encoding`)
 - **VarInt Encoding**: Compact integer encoding used throughout Bitcoin protocol
@@ -83,13 +92,14 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
 ### Bitcoin Script (`internal/script`)
 - **Script Parsing & Serialization**: Full Script parsing and serialization with varint encoding
 - **Script Execution Engine**: Stack-based virtual machine for executing Bitcoin scripts
+- **Dynamic Pattern Detection**: Runtime detection of P2SH, P2WPKH, and P2WSH patterns during execution
 - **Data Push Operations**: Support for 1-75 byte inline push, OP_PUSHDATA1/2/4
 - **Stack Operations**: OP_DUP, OP_2DUP, OP_DROP, OP_2DROP, OP_SWAP, OP_TOALTSTACK, OP_FROMALTSTACK
 - **Arithmetic Operations**: OP_ADD, OP_SUB, OP_MUL with Bitcoin number encoding (little-endian signed)
 - **Logical Operations**: OP_EQUAL, OP_EQUALVERIFY, OP_VERIFY, OP_NOT
 - **Flow Control**: OP_IF, OP_NOTIF, OP_ELSE, OP_ENDIF with nested block support
 - **Cryptographic Operations**:
-  - OP_SHA1, OP_SHA256, OP_HASH160, OP_HASH256
+  - OP_SHA1, OP_SHA256, OP_HASH160, OP_HASH256, OP_RIPEMD160
   - OP_CHECKSIG, OP_CHECKSIGVERIFY with full ECDSA verification
   - OP_CHECKMULTISIG with sliding window signature matching for m-of-n multisig
 - **Numeric Constants**: OP_0 through OP_16, OP_1NEGATE
@@ -99,6 +109,15 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
   - RedeemScript extraction and parsing from ScriptSig
   - Hash verification and redeemScript command injection
   - Full support for P2SH-wrapped multisig transactions
+- **P2WPKH Script Validation**: Pay-to-Witness-Public-Key-Hash (BIP 141)
+  - Stack-based witness program detection
+  - Automatic witness data injection
+  - Converts witness program to P2PKH equivalent script
+- **P2WSH Script Validation**: Pay-to-Witness-Script-Hash (BIP 141)
+  - Witness script hash validation using SHA256
+  - Witness stack item injection
+  - Dynamic witness script parsing and execution
+- **Nested SegWit Support**: P2SH-wrapped witness programs (P2SH-P2WPKH, P2SH-P2WSH)
 - **Script Combining**: Merge ScriptSig with ScriptPubKey for evaluation
 
 ### Transaction Handling (`internal/transactions`)
@@ -108,24 +127,40 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
   - Previous output index
   - ScriptSig (signature script)
   - Sequence number
+  - Witness data (for SegWit transactions)
 - **TxOut (Transaction Output)**:
   - Amount in satoshis
   - ScriptPubKey (locking script)
 - **Transaction Serialization/Deserialization**: Full round-trip support
+  - Legacy format serialization
+  - SegWit format serialization (BIP 144) with marker/flag bytes
+  - Automatic format detection during parsing
 - **Transaction ID Calculation**: Hash256 with proper byte reversal
+  - Always uses legacy serialization (witness data excluded from txid)
 - **Signature Hash (SigHash)**: Complete signature hash calculation for transaction signing/verification
+  - Legacy sighash for pre-SegWit transactions
+  - BIP 143 sighash for SegWit transactions
   - Automatic P2SH detection with redeemScript extraction
   - Uses redeemScript (not P2SH wrapper) for P2SH sighash calculation per BIP 16
-  - Standard P2PKH sighash for non-P2SH transactions
+  - **BIP 143 Optimizations**: Caches hashPrevouts, hashSequence, hashOutputs for efficiency
 - **Transaction Fetching**: Download and parse real transactions from Blockstream API
-  - Automatic legacy transaction detection (filters SegWit)
+  - Supports both legacy and SegWit transactions
   - Multi-block search capability
   - Caching for efficient repeated fetches
-- **SegWit Support**: Detects and strips SegWit marker bytes for legacy parsing
+- **SegWit Support**: Full Segregated Witness implementation
+  - Witness data parsing and serialization
+  - Marker (0x00) and flag (0x01) byte handling
+  - Witness item count and data extraction
+  - BIP 141 (Segregated Witness structure)
+  - BIP 143 (Signature verification for witness v0)
+  - BIP 144 (Peer services for witness transactions)
 - **UTXO Chain Traversal**: Follow transaction inputs to previous outputs
 - **Transaction Verification**: Full transaction validation from the blockchain
   - P2PKH (Pay-to-Public-Key-Hash) validation
   - P2SH (Pay-to-Script-Hash) validation with multisig support
+  - P2WPKH (Native SegWit pubkey hash) validation
+  - P2WSH (Native SegWit script hash) validation
+  - Nested SegWit (P2SH-wrapped witness programs) validation
   - Low-S signature enforcement (BIP 62) for transaction malleability prevention
 
 ### Block Handling (`internal/block`)
@@ -140,6 +175,10 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
 - **Block ID Generation**: Double SHA-256 hash with proper byte reversal
 - **Genesis Block Support**: Mainnet and testnet genesis blocks
 - **Block Chain Validation**: Validates proof of work and difficulty adjustments
+- **Soft Fork Signaling Detection**:
+  - BIP 9 version bits signaling
+  - BIP 91 SegWit activation signaling
+  - BIP 141 SegWit readiness signaling
 
 ### Networking (`internal/network`)
 - **Bitcoin P2P Protocol**: Full network message handling
@@ -186,6 +225,56 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
   - Successfully tested against Bitcoin mainnet (found historic pizza transaction!)
 
 ## Example Usage
+
+### Verifying SegWit Transactions
+
+```go
+// Create transaction fetcher
+fetcher := transactions.NewTxFetcher()
+
+// Fetch a real mainnet P2WPKH (native SegWit) transaction
+txId := "7f5186d1b8d31fc8f083d51864a2a775ce25bd41a87e7ff4622ebbdc9cffe39e"
+tx, err := fetcher.Fetch(txId, false, false)  // mainnet, use cache
+if err != nil {
+    panic(err)
+}
+
+fmt.Printf("Transaction ID: %s\n", txId)
+fmt.Printf("Is SegWit: %v\n", tx.IsSegwit)
+fmt.Printf("Number of inputs: %d\n", len(tx.Inputs))
+
+// Check witness data
+for i, input := range tx.Inputs {
+    fmt.Printf("Input %d witness items: %d\n", i, len(input.Witness))
+    for j, item := range input.Witness {
+        fmt.Printf("  Item %d: %d bytes\n", j, len(item))
+    }
+}
+
+// Verify the transaction
+valid, err := tx.Verify()
+if err != nil {
+    panic(err)
+}
+fmt.Printf("Transaction valid: %v\n", valid)  // true!
+```
+
+### Verifying Nested SegWit (P2SH-Wrapped)
+
+```go
+// Fetch a P2SH-P2WPKH transaction
+txId := "c586389e5e4b3acb9d6c8be1c19ae8ab2795397633176f5a6442a261bbdefc3a"
+tx, err := fetcher.Fetch(txId, false, false)
+if err != nil {
+    panic(err)
+}
+
+// The scriptPubKey is P2SH, but the scriptSig contains a witness program
+// The script engine automatically detects and handles the nested SegWit structure
+
+valid, err := tx.Verify()
+fmt.Printf("Nested SegWit valid: %v\n", valid)  // true!
+```
 
 ### Generating Keys and Addresses
 
@@ -241,7 +330,7 @@ for i, input := range tx.Inputs {
     combinedScript := input.ScriptSig.Combine(prevOutput.ScriptPubKey)
 
     // Evaluate the script!
-    valid := combinedScript.Evaluate(z)
+    valid := combinedScript.Evaluate(z, input.Witness)
     fmt.Printf("Input %d: %v\n", i, valid)
 }
 ```
@@ -259,7 +348,7 @@ scriptPubKeyHex := []byte{0x06, 0x76, 0x76, 0x95, 0x93, 0x56, 0x87}
 scriptPubKey, _ := script.ParseScript(bytes.NewReader(scriptPubKeyHex))
 
 combined := scriptSig.Combine(scriptPubKey)
-result := combined.Evaluate([]byte{})
+result := combined.Evaluate([]byte{}, nil)
 fmt.Printf("Result: %v\n", result)  // true
 ```
 
@@ -373,7 +462,7 @@ go-bitcoin/
     │   └── signature.go         # ECDSA signature with DER/SEC parsing
     ├── encoding/
     │   ├── base58.go            # Base58 and Base58Check encoding
-    │   ├── hash.go              # Hash256 and Hash160 functions
+    │   ├── hash.go              # Hash256, Hash160, MurmurHash3
     │   ├── varints.go           # Variable-length integer encoding
     │   ├── merkle.go            # Merkle tree construction and navigation
     │   └── merkle_test.go       # Merkle tree tests
@@ -381,12 +470,15 @@ go-bitcoin/
     │   └── keys.go              # Private/public key management
     ├── script/
     │   ├── script.go            # Bitcoin Script parsing and serialization
-    │   ├── opcodes.go           # Script execution engine and opcodes
+    │   ├── scriptengine.go      # Script execution engine and opcodes
     │   └── exercise_test.go     # Script test cases (arithmetic, SHA-1 collision)
     ├── transactions/
     │   ├── transaction.go       # Transaction structure and SigHash
     │   ├── txinputs.go          # TxIn and TxOut types
-    │   └── fetch.go             # Transaction fetching and legacy detection
+    │   ├── fetch.go             # Transaction fetching with SegWit support
+    │   ├── segwit_test.go       # SegWit transaction verification tests
+    │   ├── bip143_test.go       # BIP 143 sighash test vectors
+    │   └── bip143_manual_test.go # Manual BIP 143 preimage construction
     ├── block/
     │   └── block.go             # Block header parsing and proof of work
     └── network/
@@ -404,19 +496,54 @@ go-bitcoin/
         └── spv_test.go          # Full SPV client integration test
 ```
 
+## Architecture Highlights
+
+### Interface-Based Design
+The networking layer uses clean interfaces for extensibility:
+```go
+type Message interface {
+    Serialize() ([]byte, error)
+    Command() string
+}
+```
+All message types implement this interface, making it trivial to add new message types.
+
+### Concurrent Network I/O
+The `SimpleNode` uses three concurrent goroutines with channels for non-blocking I/O:
+- `readLoop()` - Reads from network socket
+- `sendLoop()` - Writes to network socket
+- `messageLoop()` - Routes messages to handlers
+
+### Dynamic Script Pattern Detection
+The script engine detects P2SH, P2WPKH, and P2WSH patterns at runtime during execution, matching Bitcoin Core's approach. When a pattern is detected, the engine dynamically injects additional commands into the execution queue.
+
+### BIP 143 Sighash Caching
+Transaction type caches expensive hash calculations (`hashPrevouts`, `hashSequence`, `hashOutputs`) as private fields, providing significant performance optimization for multi-input transactions.
+
+### Type Safety
+Go's strong typing prevents entire classes of bugs:
+- Compile-time validation of message implementations
+- Type aliases for clarity (e.g., `MagicNum = uint32`)
+- Clear distinction between data and opcodes in `ScriptCommand`
+
 ## Implementation Notes
 
 - Uses Go's `math/big.Int` for arbitrary-precision arithmetic (256-bit operations)
 - Cryptographically secure random number generation via `crypto/rand`
-- All operations use big-endian byte order (Bitcoin standard)
+- All operations use correct byte order (Bitcoin standard)
 - Follows idiomatic Go patterns (composition over inheritance)
 - **Validates real Bitcoin transactions** from the blockchain using full Script evaluation
 - **Connects to Bitcoin mainnet** and downloads/validates block headers
 - Implements Bitcoin's legacy P2PKH (Pay-to-Public-Key-Hash) format
-- Stack-based Script VM with complete opcode support
+- Full SegWit support: P2WPKH, P2WSH, and nested SegWit (P2SH-wrapped)
+- Stack-based Script VM with comprehensive opcode support
 - Concurrent P2P networking with goroutines and channels
 - RIPEMD-160 via `golang.org/x/crypto` (legacy hash, required for Bitcoin)
-- Comprehensive test suite including SHA-1 collision detection (SHAttered attack)
+- Comprehensive test suite including:
+  - Real mainnet SegWit transaction verification
+  - Official BIP 143 test vectors
+  - SHA-1 collision detection (SHAttered attack)
+  - SPV client with bloom filters
 
 ## Standards Implemented
 
@@ -428,29 +555,22 @@ go-bitcoin/
 - **BIP-16**: Pay-to-Script-Hash execution semantics
 - **BIP-37**: Connection Bloom filtering (merkleblock parsing for SPV)
 - **BIP-62**: Low-S signature enforcement for transaction malleability prevention
+- **BIP-141**: Segregated Witness (consensus layer)
+- **BIP-143**: Transaction signature verification for version 0 witness program
+- **BIP-144**: Peer services for Segregated Witness
 
-## Next Steps
+## Test Coverage
 
-- Chapter 13: SegWit
-  - Segregated Witness implementation (BIP 141, 143, 144)
-  - Witness data handling
-  - Native SegWit address support (bech32)
-- Chapter 14: Advanced Topics
-  - Payment channels
-  - Timelock transactions (CLTV, CSV)
-  - Advanced scripting patterns
-
-## Development
-
-This is a learning project following "Programming Bitcoin" by Jimmy Song. The goal is to understand Bitcoin's cryptographic foundations by implementing them from scratch.
-
-**⚠️ For production use**, consider battle-tested libraries like:
-- `github.com/btcsuite/btcd` - Full Bitcoin implementation
-- `github.com/btcsuite/btcutil` - Bitcoin utility functions
+All major components have comprehensive test coverage with real blockchain data:
 
 ```bash
-# Connect to Bitcoin mainnet and download block headers
-go run main.go
+# Run SegWit transaction verification tests (real mainnet transactions)
+go test -v ./internal/transactions/ -run TestP2wpkh
+go test -v ./internal/transactions/ -run TestP2wsh
+go test -v ./internal/transactions/ -run TestNestedSegwit
+
+# Run BIP 143 sighash tests (official test vectors)
+go test -v ./internal/transactions/ -run TestBIP143
 
 # Run SPV client test (finds the Bitcoin Pizza transaction!)
 go test -v ./internal/network/ -run TestSPVFlow
@@ -466,6 +586,29 @@ go test -v ./internal/network/ -run TestBloom
 
 # Run all tests
 go test ./...
+```
+
+## Known Limitations
+
+While this implementation successfully completes all chapters of Programming Bitcoin, there are some features present in production implementations that are not included:
+
+- **Bech32 address encoding** (BIP 173) - Can verify bc1... transactions but cannot generate bc1... addresses
+- **RFC 6979 deterministic signatures** - Uses crypto/rand instead of deterministic k generation
+- **Timelock opcodes** - OP_CHECKLOCKTIMEVERIFY (BIP 65) and OP_CHECKSEQUENCEVERIFY (BIP 112) not implemented
+- **Additional opcodes** - ~50 opcodes not yet implemented (OP_OVER, OP_PICK, OP_ROLL, OP_MIN, OP_MAX, etc.)
+- **Taproot** - Witness v1 (BIP 341, 342) not implemented
+
+## Development
+
+This is a learning project following "Programming Bitcoin" by Jimmy Song. The goal is to understand Bitcoin's cryptographic foundations by implementing them from scratch.
+
+**⚠️ For production use**, consider battle-tested libraries like:
+- `github.com/btcsuite/btcd` - Full Bitcoin implementation
+- `github.com/btcsuite/btcutil` - Bitcoin utility functions
+
+```bash
+# Connect to Bitcoin mainnet and download block headers
+go run main.go
 
 # Dependencies
 go get golang.org/x/crypto/ripemd160
@@ -478,3 +621,12 @@ go get golang.org/x/crypto/ripemd160
 - [BIPs (Bitcoin Improvement Proposals)](https://github.com/bitcoin/bips)
 - [SEC Format Specification](https://www.secg.org/sec1-v2.pdf)
 - [Base58Check encoding](https://en.bitcoin.it/wiki/Base58Check_encoding)
+- [BIP 141: Segregated Witness](https://github.com/bitcoin/bips/blob/master/bip-0141.mediawiki)
+- [BIP 143: Transaction Signature Verification for Version 0 Witness Program](https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki)
+- [BIP 144: Peer Services](https://github.com/bitcoin/bips/blob/master/bip-0144.mediawiki)
+
+## Acknowledgments
+
+This implementation follows the excellent "Programming Bitcoin" book by Jimmy Song. The hands-on approach of building Bitcoin from first principles provides deep understanding of the protocol's cryptographic foundations.
+
+**Key Achievement**: Successfully verifies real SegWit transactions from Bitcoin mainnet, including native P2WPKH, P2WSH, and nested SegWit (P2SH-wrapped) transactions. All BIP 143 test vectors pass.

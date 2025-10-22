@@ -5,11 +5,67 @@ import (
 	"testing"
 )
 
+func TestP2wshVerification(t *testing.T) {
+	txHash := "42b2c123ed8b96b26d5442d181cb6dd8c5403340e46d16e6ec6784a1d50f82f5" // p2wsh
+	fetcher := transactions.NewTxFetcher()
+	tx, err := fetcher.Fetch(txHash, false, false) // mainnet, not fresh
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("Transaction: %s", tx)
+	t.Logf("IsSegwit: %v", tx.IsSegwit)
+	t.Logf("Number of inputs: %d", len(tx.Inputs))
+
+	// Check if it's actually SegWit
+	if !tx.IsSegwit {
+		t.Fatal("Expected SegWit transaction")
+	}
+
+	// Verify each input
+	for i, txin := range tx.Inputs {
+		t.Logf("Input %d:", i)
+		t.Logf("  Witness items: %d", len(txin.Witness))
+		for j, item := range txin.Witness {
+			t.Logf("    Item %d: %d bytes", j, len(item))
+		}
+
+		// Get the scriptPubKey being spent
+		scriptPubKey, err := txin.ScriptPubKey(false)
+		if err != nil {
+			t.Fatalf("Error fetching scriptPubKey for input %d: %v", i, err)
+		}
+
+		t.Logf("  ScriptPubKey type:")
+		if scriptPubKey.IsP2wpkhScriptPubKey() {
+			t.Logf("    P2WPKH (native SegWit)")
+		} else if scriptPubKey.IsP2shScriptPubKey() {
+			t.Logf("    P2SH (possibly nested SegWit)")
+		} else if scriptPubKey.IsP2wshScriptPubKey() {
+			t.Logf("    P2WSH (native SegWit)")
+		} else {
+			t.Logf("    Other type")
+		}
+	}
+
+	// Try to verify
+	valid, err := tx.Verify()
+	if err != nil {
+		t.Fatalf("Verification error: %v", err)
+	}
+
+	if !valid {
+		t.Fatal("Transaction verification failed")
+	}
+
+	t.Log("SUCCESS! SegWit transaction verified")
+}
+
 func TestP2wpkhVerification(t *testing.T) {
 	// Known P2WPKH (native SegWit) transaction
 	// This is a real mainnet transaction spending from bc1q (bech32) address
 	// Transaction: spending native SegWit outputs
-	txHash := "7f5186d1b8d31fc8f083d51864a2a775ce25bd41a87e7ff4622ebbdc9cffe39e"
+	txHash := "7f5186d1b8d31fc8f083d51864a2a775ce25bd41a87e7ff4622ebbdc9cffe39e" // p2wpkh
 
 	fetcher := transactions.NewTxFetcher()
 	tx, err := fetcher.Fetch(txHash, false, false) // mainnet, not fresh
@@ -45,6 +101,8 @@ func TestP2wpkhVerification(t *testing.T) {
 			t.Logf("    P2WPKH (native SegWit)")
 		} else if scriptPubKey.IsP2shScriptPubKey() {
 			t.Logf("    P2SH (possibly nested SegWit)")
+		} else if scriptPubKey.IsP2wshScriptPubKey() {
+			t.Logf("    P2WSH (native SegWit)")
 		} else {
 			t.Logf("    Other type")
 		}
