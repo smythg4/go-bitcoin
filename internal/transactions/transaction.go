@@ -370,7 +370,7 @@ func ParseSegwitTransaction(r io.Reader, version uint32) (Transaction, error) {
 		Inputs:   txins,
 		Outputs:  txouts,
 		Locktime: locktime,
-		IsSegwit: false,
+		IsSegwit: true,
 	}, nil
 }
 
@@ -480,8 +480,8 @@ func (t *Transaction) Fee(testNet bool) (uint64, error) {
 	return inputSum - outputSum, nil
 }
 
-func (t *Transaction) verifyInput(inputIndex int) (bool, error) {
-	if inputIndex > len(t.Inputs) {
+func (t *Transaction) VerifyInput(inputIndex int) (bool, error) {
+	if inputIndex >= len(t.Inputs) {
 		return false, errors.New("inputIndex out of range")
 	}
 	input := t.Inputs[inputIndex]
@@ -492,17 +492,59 @@ func (t *Transaction) verifyInput(inputIndex int) (bool, error) {
 		return false, fmt.Errorf("error fetching ScriptPubKey for index %d: %w", inputIndex, err)
 	}
 
-	// calculate signature hash for this input
-	z, err := t.SigHash(inputIndex)
-	if err != nil {
-		return false, fmt.Errorf("error generating sighash for index %d: %w", inputIndex, err)
+	var z []byte
+	var witness [][]byte
+
+	if scriptPubKey.IsP2wpkhScriptPubKey() {
+		// native p2wpkh
+		// scriptsig empty, witness contains signature data
+		z, err = t.SigHashBIP143(inputIndex, nil, nil)
+		if err != nil {
+			return false, fmt.Errorf("error generating BIP143 sighash: %w", err)
+		}
+		witness = input.Witness
+	} else if scriptPubKey.IsP2shScriptPubKey() {
+		// Could be nested SegWit (P2SH-wrapped P2WPKH)
+		// Extract redeemScript from ScriptSig (last element)
+		if len(input.ScriptSig.CommandStack) == 0 {
+			return false, errors.New("empty ScriptSig for P2SH input")
+		}
+		command := input.ScriptSig.CommandStack[len(input.ScriptSig.CommandStack)-1]
+		rawRedeemLen := len(command.Data)
+		redeemLenBytes, err := encoding.EncodeVarInt(uint64(rawRedeemLen))
+		if err != nil {
+			return false, err
+		}
+		rawRedeem := append(redeemLenBytes, command.Data...)
+		redeemScript, err := script.ParseScript(bytes.NewReader(rawRedeem))
+		if err != nil {
+			return false, err
+		}
+		if redeemScript.IsP2wpkhScriptPubKey() {
+			z, err = t.SigHashBIP143(inputIndex, &redeemScript, nil)
+			if err != nil {
+				return false, fmt.Errorf("error generating sighash for index %d: %w", inputIndex, err)
+			}
+			witness = input.Witness
+		} else {
+			z, err = t.SigHashBIP143(inputIndex, &redeemScript, nil)
+			if err != nil {
+				return false, fmt.Errorf("error generating sighash for index %d: %w", inputIndex, err)
+			}
+		}
+	} else {
+		// legacy P2PKH or other...
+		z, err = t.SigHash(inputIndex)
+		if err != nil {
+			return false, fmt.Errorf("error generating sighash for index %d: %w", inputIndex, err)
+		}
 	}
 
 	// combine ScriptSig + ScriptPubKey
 	combinedScript := input.ScriptSig.Combine(scriptPubKey)
 
 	// evaluate
-	return combinedScript.Evaluate(z), nil
+	return combinedScript.Evaluate(z, witness), nil
 }
 
 func (t *Transaction) Verify() (bool, error) {
@@ -514,7 +556,7 @@ func (t *Transaction) Verify() (bool, error) {
 	}
 
 	for i, txin := range t.Inputs {
-		valid, err := t.verifyInput(i)
+		valid, err := t.VerifyInput(i)
 		if err != nil {
 			return false, fmt.Errorf("error verifying input %s: %w", txin, err)
 		}
@@ -586,4 +628,141 @@ func (t *Transaction) coinbaseHeight() int64 {
 	}
 	element := t.Inputs[0].ScriptSig.CommandStack[0]
 	return script.DecodeNum(element.Data)
+}
+
+func (t *Transaction) SigHashBIP143(inputIndex int, redeemScript *script.Script, witnessScript *script.Script) ([]byte, error) {
+	txin := t.Inputs[inputIndex]
+
+	// per BIP143 spec
+	s := bytes.NewBuffer(nil)
+
+	buf4 := make([]byte, 4)
+	buf8 := make([]byte, 8)
+
+	var scriptCode []byte
+	var err error
+	// version bytes
+	binary.LittleEndian.PutUint32(buf4, t.Version)
+	if _, err := s.Write(buf4); err != nil {
+		return nil, err
+	}
+
+	if _, err := s.Write(t.hashPrevOuts()); err != nil {
+		return nil, err
+	}
+	if _, err := s.Write(t.hashSequence()); err != nil {
+		return nil, err
+	}
+	prevout := make([]byte, len(txin.PrevTx))
+	copy(prevout, txin.PrevTx)
+	slices.Reverse(prevout)
+	if _, err := s.Write(prevout); err != nil {
+		return nil, err
+	}
+	binary.LittleEndian.PutUint32(buf4, txin.PrevIdx)
+	if _, err := s.Write(buf4); err != nil {
+		return nil, err
+	}
+	if witnessScript != nil {
+		scriptCode, err = witnessScript.Serialize()
+		if err != nil {
+			return nil, err
+		}
+	} else if redeemScript != nil {
+		scr := script.P2pkhScript(redeemScript.CommandStack[1].Data)
+		scriptCode, err = scr.Serialize()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		pk, err := txin.ScriptPubKey(t.IsTestnet)
+		if err != nil {
+			return nil, err
+		}
+		scr := script.P2pkhScript(pk.CommandStack[1].Data)
+		scriptCode, err = scr.Serialize()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if _, err := s.Write(scriptCode); err != nil {
+		return nil, err
+	}
+
+	val, err := txin.Value(t.IsTestnet)
+	if err != nil {
+		return nil, err
+	}
+	binary.LittleEndian.PutUint64(buf8, val)
+	if _, err := s.Write(buf8); err != nil {
+		return nil, err
+	}
+
+	binary.LittleEndian.PutUint32(buf4, txin.Sequence)
+	if _, err := s.Write(buf4); err != nil {
+		return nil, err
+	}
+
+	outHash, err := t.hashOutputs()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.Write(outHash); err != nil {
+		return nil, err
+	}
+
+	binary.LittleEndian.PutUint32(buf4, t.Locktime)
+	if _, err := s.Write(buf4); err != nil {
+		return nil, err
+	}
+
+	binary.LittleEndian.PutUint32(buf4, encoding.SIGHASH_ALL)
+	if _, err := s.Write(buf4); err != nil {
+		return nil, err
+	}
+
+	return encoding.Hash256(s.Bytes()), nil
+}
+
+func (t *Transaction) hashPrevOuts() []byte {
+	if t.cachedHashOutputs == nil {
+		allPrevOuts := []byte{}
+		allSequence := []byte{}
+		buf4 := make([]byte, 4)
+		for _, txin := range t.Inputs {
+			prevout := make([]byte, len(txin.PrevTx))
+			copy(prevout, txin.PrevTx)
+			slices.Reverse(prevout)
+			allPrevOuts = append(allPrevOuts, prevout...)
+			binary.LittleEndian.PutUint32(buf4, txin.PrevIdx)
+			allPrevOuts = append(allPrevOuts, buf4...)
+			binary.LittleEndian.PutUint32(buf4, txin.Sequence)
+			allSequence = append(allSequence, buf4...)
+		}
+		t.cachedHashPrevOuts = encoding.Hash256(allPrevOuts)
+		t.cachedHashSequence = encoding.Hash256(allSequence)
+	}
+	return t.cachedHashPrevOuts
+}
+
+func (t *Transaction) hashSequence() []byte {
+	if t.cachedHashSequence == nil {
+		_ = t.hashPrevOuts() // this should populate it
+	}
+	return t.cachedHashSequence
+}
+
+func (t *Transaction) hashOutputs() ([]byte, error) {
+	if t.cachedHashOutputs == nil {
+		allOutputs := []byte{}
+		for _, txout := range t.Outputs {
+			ser, err := txout.Serialize()
+			if err != nil {
+				return nil, err
+			}
+			allOutputs = append(allOutputs, ser...)
+		}
+		t.cachedHashOutputs = encoding.Hash256(allOutputs)
+	}
+	return t.cachedHashOutputs, nil
 }

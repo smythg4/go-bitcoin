@@ -9,7 +9,7 @@ func TestP2wpkhVerification(t *testing.T) {
 	// Known P2WPKH (native SegWit) transaction
 	// This is a real mainnet transaction spending from bc1q (bech32) address
 	// Transaction: spending native SegWit outputs
-	txHash := "fff2525b8931402dd09222c50775608f75787bd2b87e56995a7bdd30f79702c4"
+	txHash := "7f5186d1b8d31fc8f083d51864a2a775ce25bd41a87e7ff4622ebbdc9cffe39e"
 
 	fetcher := transactions.NewTxFetcher()
 	tx, err := fetcher.Fetch(txHash, false, false) // mainnet, not fresh
@@ -87,7 +87,7 @@ func TestNestedSegwitVerification(t *testing.T) {
 
 	// Try verification and log detailed error
 	for i := range tx.Inputs {
-		valid, err := tx.Verify()
+		valid, err := tx.VerifyInput(i)
 		if err != nil {
 			t.Fatalf("Input %d error: %v", i, err)
 		}

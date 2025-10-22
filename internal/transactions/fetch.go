@@ -3,7 +3,6 @@ package transactions
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -55,25 +54,10 @@ func (tf *TxFetcher) Fetch(txId string, testNet, fresh bool) (*Transaction, erro
 		return nil, err
 	}
 
-	var tx Transaction
-
-	if rawBytes[4] == 0 {
-		// special SegWit handling
-		stripped := make([]byte, 0, len(rawBytes)-2)
-		stripped = append(stripped, rawBytes[:4]...)
-		stripped = append(stripped, rawBytes[6:]...)
-		r := bytes.NewBuffer(stripped)
-		tx, err = ParseTransaction(r)
-		if err != nil {
-			return nil, err
-		}
-		tx.Locktime = binary.LittleEndian.Uint32(rawBytes[len(rawBytes)-4:])
-	} else {
-		r := bytes.NewBuffer(rawBytes)
-		tx, err = ParseTransaction(r)
-		if err != nil {
-			return nil, err
-		}
+	r := bytes.NewBuffer(rawBytes)
+	tx, err := ParseTransaction(r)
+	if err != nil {
+		return nil, err
 	}
 
 	// verify txids match

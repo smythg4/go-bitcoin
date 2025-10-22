@@ -26,7 +26,7 @@ func TestSimpleArithmeticScript(t *testing.T) {
 
 	// Combine and evaluate
 	combined := scriptSig.Combine(scriptPubKey)
-	result := combined.Evaluate([]byte{})
+	result := combined.Evaluate([]byte{}, nil)
 
 	if !result {
 		t.Errorf("Simple arithmetic script failed, expected true")
@@ -53,7 +53,7 @@ func TestSHA1CollisionScriptWithIdenticalValues(t *testing.T) {
 	}
 
 	combined := scriptSig.Combine(scriptPubKey)
-	result := combined.Evaluate([]byte{})
+	result := combined.Evaluate([]byte{}, nil)
 
 	if result {
 		t.Errorf("SHA-1 collision script with identical values should fail (x != y required)")
@@ -80,7 +80,7 @@ func TestSHA1CollisionScriptWithDifferentValues(t *testing.T) {
 	}
 
 	combined := scriptSig.Combine(scriptPubKey)
-	result := combined.Evaluate([]byte{})
+	result := combined.Evaluate([]byte{}, nil)
 
 	if result {
 		t.Errorf("SHA-1 collision script with different values/hashes should fail (need actual collision)")
@@ -179,7 +179,7 @@ func TestSHA1CollisionScriptWithActualCollision(t *testing.T) {
 	}
 
 	combined := scriptSig.Combine(scriptPubKey)
-	result := combined.Evaluate([]byte{})
+	result := combined.Evaluate([]byte{}, nil)
 
 	if !result {
 		t.Errorf("SHA-1 collision script with actual collision should pass!")

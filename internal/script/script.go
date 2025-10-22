@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"go-bitcoin/internal/encoding"
 	"io"
+	"slices"
 )
 
 type ScriptCommand struct {
@@ -218,8 +219,13 @@ func (s Script) Combine(scriptPubKey Script) Script {
 	}
 }
 
-func (s *Script) Evaluate(sighash []byte) bool {
+func (s *Script) Evaluate(sighash []byte, witness [][]byte) bool {
 	engine := NewScriptEngine(*s)
+	// this might not be the right way to push the witness script on top of the sighash
+	slices.Reverse(witness)
+	for _, item := range witness {
+		sighash = append(sighash, item...)
+	}
 	return engine.Execute(sighash)
 }
 
