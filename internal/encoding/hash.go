@@ -8,6 +8,7 @@ import (
 )
 
 const BIP37_CONSTANT uint32 = 0xfba4c795
+const SIGHASH_ALL uint32 = 0x01000000
 
 func Hash256(data []byte) []byte {
 	first := sha256.Sum256(data)

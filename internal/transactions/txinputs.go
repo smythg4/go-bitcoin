@@ -14,6 +14,7 @@ type TxIn struct {
 	PrevIdx   uint32
 	ScriptSig script.Script
 	Sequence  uint32
+	Witness   [][]byte
 }
 
 func NewTxIn(prevTx []byte, prevIdx, sequence uint32) TxIn {

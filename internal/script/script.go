@@ -309,6 +309,52 @@ func P2pkhScript(h160 []byte) Script {
 	return NewScript(cmds)
 }
 
+func P2shScript(h160 []byte) Script {
+	// take a hash160 and returns the p2sh ScriptPubKey
+	c1 := ScriptCommand{
+		Opcode: OP_HASH160,
+		IsData: false,
+	}
+	c2 := ScriptCommand{
+		IsData: true,
+		Data:   h160,
+	}
+	c3 := ScriptCommand{
+		Opcode: OP_EQUAL,
+		IsData: false,
+	}
+	cmds := []ScriptCommand{c1, c2, c3}
+	return NewScript(cmds)
+}
+
+func P2wpkhScript(h160 []byte) Script {
+	// take a hash160 and returns the p2wpkh ScriptPubKey
+	c1 := ScriptCommand{
+		Opcode: OP_O,
+		IsData: false,
+	}
+	c2 := ScriptCommand{
+		IsData: true,
+		Data:   h160,
+	}
+	cmds := []ScriptCommand{c1, c2}
+	return NewScript(cmds)
+}
+
+func P2wshScript(h256 []byte) Script {
+	// take a hash256 and returns the p2wsh ScriptPubKey
+	c1 := ScriptCommand{
+		Opcode: OP_O,
+		IsData: false,
+	}
+	c2 := ScriptCommand{
+		IsData: true,
+		Data:   h256,
+	}
+	cmds := []ScriptCommand{c1, c2}
+	return NewScript(cmds)
+}
+
 func P2pkhAddress(h160 []byte, testNet bool) string {
 	prefix := 0x00
 	if testNet {
@@ -337,4 +383,26 @@ func (s *Script) Address(testnet bool) (string, error) {
 		h160 := s.CommandStack[2].Data
 		return P2pkhAddress(h160, testnet), nil
 	}
+}
+
+func (s *Script) IsP2wpkhScriptPubKey() bool {
+	return len(s.CommandStack) == 2 &&
+		s.CommandStack[0].Opcode == OP_O &&
+		s.CommandStack[1].IsData &&
+		len(s.CommandStack[1].Data) == 20
+}
+
+func (s *Script) IsP2wshScriptPubKey() bool {
+	return len(s.CommandStack) == 2 &&
+		s.CommandStack[0].Opcode == OP_O &&
+		s.CommandStack[1].IsData &&
+		len(s.CommandStack[1].Data) == 32
+}
+
+func (s *Script) IsP2shScriptPubKey() bool {
+	return len(s.CommandStack) == 3 &&
+		s.CommandStack[0].Opcode == OP_HASH160 &&
+		s.CommandStack[1].IsData &&
+		len(s.CommandStack[1].Data) == 20 &&
+		s.CommandStack[2].Opcode == OP_EQUAL
 }

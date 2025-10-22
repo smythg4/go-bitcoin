@@ -18,22 +18,29 @@ type Transaction struct {
 	Outputs   []TxOut
 	Locktime  uint32
 	IsTestnet bool
+	IsSegwit  bool
+
+	// private cached values
+	cachedHashPrevOuts []byte
+	cachedHashSequence []byte
+	cachedHashOutputs  []byte
 }
 
-func NewTransaction(version uint32, inputs []TxIn, outputs []TxOut, locktime uint32, isTestNet bool) Transaction {
+func NewTransaction(version uint32, inputs []TxIn, outputs []TxOut, locktime uint32, isTestNet, isSegwit bool) Transaction {
 	return Transaction{
 		Version:   uint32(version),
 		Inputs:    inputs,
 		Outputs:   outputs,
 		Locktime:  locktime,
 		IsTestnet: isTestNet,
+		IsSegwit:  isSegwit,
 	}
 }
 
 func (t Transaction) String() string {
 	id, _ := t.Id()
-	return fmt.Sprintf("tx: %s\n   version:\t%d\n   tx_ins:\t%v\n   tx_outs:\t%v\n   locktime:\t%d",
-		id, t.Version, t.Inputs, t.Outputs, t.Locktime)
+	return fmt.Sprintf("tx: %s\n   version:\t%d\n   tx_ins:\t%v\n   tx_outs:\t%v\n   locktime:\t%d\n   isSegwit:\t%v",
+		id, t.Version, t.Inputs, t.Outputs, t.Locktime, t.IsSegwit)
 }
 
 func (t *Transaction) Id() (string, error) {
@@ -47,7 +54,7 @@ func (t *Transaction) Id() (string, error) {
 
 func (t *Transaction) hash() ([]byte, error) {
 	// Binary hash of the legacy serialization
-	serialized, err := t.Serialize()
+	serialized, err := t.SerializeLegacy()
 	if err != nil {
 		return nil, err
 	}
@@ -58,6 +65,15 @@ func (t *Transaction) hash() ([]byte, error) {
 
 func (t *Transaction) Serialize() ([]byte, error) {
 	// returns the byte serialization of the transaction
+	if t.IsSegwit {
+		return t.SerializeSegwit()
+	} else {
+		return t.SerializeLegacy()
+	}
+}
+
+func (t *Transaction) SerializeLegacy() ([]byte, error) {
+	// returns the byte serialization of the legacy transaction
 	var result bytes.Buffer
 
 	buf := make([]byte, 4)
@@ -122,14 +138,121 @@ func (t *Transaction) Serialize() ([]byte, error) {
 	return result.Bytes(), nil
 }
 
+func (t *Transaction) SerializeSegwit() ([]byte, error) {
+	// returns the byte serialization of the Segwit transaction
+	var result bytes.Buffer
+
+	// marker and flag bytes
+	n, err := result.Write([]byte{0x00, 0x01})
+	if err != nil || n != 2 {
+		return nil, fmt.Errorf("tx serialization error (marker/flag) - %w", err)
+	}
+
+	buf := make([]byte, 4)
+	// version
+	binary.LittleEndian.PutUint32(buf[:4], uint32(t.Version))
+	n, err = result.Write(buf[:4])
+	if err != nil || n != 4 {
+		return nil, fmt.Errorf("tx serialization error (version) - %w", err)
+	}
+
+	// inputs len
+	inputLen := uint64(len(t.Inputs))
+	inputLenBytes, err := encoding.EncodeVarInt(inputLen)
+	if err != nil {
+		return nil, err
+	}
+	_, err = result.Write(inputLenBytes)
+	if err != nil {
+		return nil, fmt.Errorf("tx serialization error (inputs length) - %w", err)
+	}
+	// inputs slice
+	for i, tx := range t.Inputs {
+		data, err := tx.Serialize()
+		if err != nil {
+			return nil, fmt.Errorf("tx serialization error (input read %d) - %w", i, err)
+		}
+		_, err = result.Write(data)
+		if err != nil {
+			return nil, fmt.Errorf("tx serialization error (input write %d) - %w", i, err)
+		}
+	}
+
+	// outputs len
+	outputLen := uint64(len(t.Outputs))
+	outputLenBytes, err := encoding.EncodeVarInt(outputLen)
+	if err != nil {
+		return nil, err
+	}
+	_, err = result.Write(outputLenBytes)
+	if err != nil {
+		return nil, fmt.Errorf("tx serialization error (outputs length) - %w", err)
+	}
+	for i, tx := range t.Outputs {
+		data, err := tx.Serialize()
+		if err != nil {
+			return nil, fmt.Errorf("tx serialization error (output read %d) - %w", i, err)
+		}
+		_, err = result.Write(data)
+		if err != nil {
+			return nil, fmt.Errorf("tx serialization error (output write %d) - %w", i, err)
+		}
+	}
+	// witness
+	for _, txin := range t.Inputs {
+		numItemBytes, err := encoding.EncodeVarInt(uint64(len(txin.Witness)))
+		if err != nil {
+			return nil, err
+		}
+		// write the varint number of items
+		if _, err := result.Write(numItemBytes); err != nil {
+			return nil, err
+		}
+		for _, item := range txin.Witness {
+			itemLenBytes, err := encoding.EncodeVarInt(uint64(len(item)))
+			if err != nil {
+				return nil, err
+			}
+			// write the varint length of this item
+			if _, err := result.Write(itemLenBytes); err != nil {
+				return nil, err
+			}
+			// write this item
+			if _, err := result.Write(item); err != nil {
+				return nil, err
+			}
+		}
+	}
+	// locktime
+	binary.LittleEndian.PutUint32(buf[:4], uint32(t.Locktime))
+	n, err = result.Write(buf[:4])
+	if err != nil || n != 4 {
+		return nil, fmt.Errorf("tx serialization error (locktime) - %w", err)
+	}
+
+	return result.Bytes(), nil
+}
+
 func ParseTransaction(r io.Reader) (Transaction, error) {
 	// version
-	buf := make([]byte, 4)
+	buf := make([]byte, 5)
 	n, err := r.Read(buf)
-	if err != nil || n != 4 {
-		return Transaction{}, fmt.Errorf("tx parse error (version) - %w", err)
+	if err != nil || n != 5 {
+		return Transaction{}, fmt.Errorf("tx parse error (version and marker) - %w", err)
 	}
-	version := binary.LittleEndian.Uint32(buf)
+	version := binary.LittleEndian.Uint32(buf[:4])
+
+	if buf[4] == 0x00 {
+		// marker byte for SegWit
+		return ParseSegwitTransaction(r, version)
+	} else {
+		return ParseLegacyTransaction(r, version, buf[4])
+	}
+}
+
+func ParseLegacyTransaction(r io.Reader, version uint32, firstByte byte) (Transaction, error) {
+	// hacky way to "rewind" the reader for proper varint reading
+	r = io.MultiReader(bytes.NewReader([]byte{firstByte}), r)
 
 	// parse TxIn
 	len, err := encoding.ReadVarInt(r)
@@ -161,7 +284,8 @@ func ParseTransaction(r io.Reader) (Transaction, error) {
 	}
 
 	// locktime
-	n, err = r.Read(buf) // reuse 4-byte buffer
+	buf := make([]byte, 4)
+	n, err := r.Read(buf)
 	if err != nil || n != 4 {
 		return Transaction{}, fmt.Errorf("tx parse error (locktime) - %w", err)
 	}
@@ -172,6 +296,81 @@ func ParseTransaction(r io.Reader) (Transaction, error) {
 		Inputs:   txins,
 		Outputs:  txouts,
 		Locktime: locktime,
+		IsSegwit: false,
+	}, nil
+}
+
+func ParseSegwitTransaction(r io.Reader, version uint32) (Transaction, error) {
+	// check the flag byte (marker byte already checked)
+	flag := make([]byte, 1)
+	if _, err := r.Read(flag); err != nil {
+		return Transaction{}, err
+	}
+
+	// parse TxIn
+	len, err := encoding.ReadVarInt(r)
+	if err != nil {
+		return Transaction{}, err
+	}
+	var i uint64
+	txins := make([]TxIn, 0, len)
+	for i = 0; i < len; i++ {
+		tx, err := ParseTxIn(r)
+		if err != nil {
+			return Transaction{}, err
+		}
+		txins = append(txins, tx)
+	}
+
+	// parse TxOut
+	len, err = encoding.ReadVarInt(r)
+	if err != nil {
+		return Transaction{}, err
+	}
+	txouts := make([]TxOut, 0, len)
+	for i = 0; i < len; i++ {
+		tx, err := ParseTxOut(r)
+		if err != nil {
+			return Transaction{}, err
+		}
+		txouts = append(txouts, tx)
+	}
+
+	// parse witnesses
+	for i := range txins {
+		numItems, err := encoding.ReadVarInt(r)
+		if err != nil {
+			return Transaction{}, err
+		}
+		items := make([][]byte, numItems)
+		for j := uint64(0); j < numItems; j++ {
+			itemLen, err := encoding.ReadVarInt(r)
+			if err != nil {
+				return Transaction{}, err
+			}
+			itemBytes := make([]byte, itemLen)
+			if _, err := r.Read(itemBytes); err != nil {
+				return Transaction{}, err
+			}
+			items = append(items, itemBytes)
+		}
+		txins[i].Witness = items
+	}
+
+	// parse locktime
+	buf := make([]byte, 4)
+	n, err := r.Read(buf)
+	if err != nil || n != 4 {
+		return Transaction{}, fmt.Errorf("tx parse error (locktime) - %w", err)
+	}
+	locktime := binary.LittleEndian.Uint32(buf)
+
+	return Transaction{
+		Version:  version,
+		Inputs:   txins,
+		Outputs:  txouts,
+		Locktime: locktime,
+		IsSegwit: false,
 	}, nil
 }
 
@@ -246,7 +445,7 @@ func (t *Transaction) SigHash(inputIndex int) ([]byte, error) {
 
 	// append sighash type (SIGHASH_ALL  = 0x01000000)
 	sighashType := make([]byte, 4)
-	binary.LittleEndian.PutUint32(sighashType, 1)
+	binary.LittleEndian.PutUint32(sighashType, encoding.SIGHASH_ALL)
 	serialized = append(serialized, sighashType...)
 
 	// double SHA256
@@ -339,7 +538,9 @@ func (t *Transaction) SignInput(inputIndex int, privKey keys.PrivateKey, compres
 	}
 
 	derSig := sig.Serialize()
-	derSigWithHashType := append(derSig, 0x01) // append SIGHASH_ALL
+	sighashType := make([]byte, 4)
+	binary.LittleEndian.PutUint32(sighashType, encoding.SIGHASH_ALL)
+	derSigWithHashType := append(derSig, sighashType...)
 
 	publicKey := privKey.PublicKey()
 	secPubKey := publicKey.Serialize(compressed)
