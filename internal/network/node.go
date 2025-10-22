@@ -61,7 +61,7 @@ func NewSimpleNode(host string, port int, testNet, logging bool) (*SimpleNode, e
 	sn.RegisterChannel("verack", 1)
 	sn.RegisterChannel("headers", 1)
 	sn.RegisterChannel("block", 1)
-	sn.RegisterChannel("merkleblock", 50)
+	sn.RegisterChannel("merkleblock", 1)
 	sn.RegisterChannel("tx", 10)
 	sn.wg.Add(3)
 
