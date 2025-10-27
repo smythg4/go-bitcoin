@@ -3,7 +3,6 @@ package eccmath
 import (
 	"crypto/rand"
 	"fmt"
-	"go-bitcoin/internal/encoding"
 	"math/big"
 )
 
@@ -245,15 +244,4 @@ func (p *S256Point) Deserialize(data []byte) (S256Point, error) {
 	}
 
 	return S256Point{}, fmt.Errorf("invalid SEC format")
-}
-
-func (p *S256Point) Address(compressed, testnet bool) string {
-	// this is a bit redundant. I have functions also written in script.go
-	data := p.Serialize(compressed)
-	h160 := encoding.Hash160(data)
-	prefix := 0x00
-	if testnet {
-		prefix = 0x6f // testnet prefix
-	}
-	return encoding.EncodeBase58Checksum(append([]byte{byte(prefix)}, h160...))
 }

@@ -3,6 +3,7 @@ package network
 import (
 	"bytes"
 	"encoding/hex"
+	"go-bitcoin/internal/address"
 	"go-bitcoin/internal/encoding"
 	"go-bitcoin/internal/transactions"
 	"slices"
@@ -12,10 +13,10 @@ import (
 func TestSPVFlow(t *testing.T) {
 	// setup
 	lastBlockHex := "0000000013e7e85518dac94d012d73253d3fdac5c30c4143b177f3086f129580" // block 57042 - right before pizza tx
-	address := "17SkEw2md5avVNyYgj6RiXuQKNwkXaxFyQ"                                    // jercos - received 10,000 BTC for pizza in block 57043
+	targetAddress := "17SkEw2md5avVNyYgj6RiXuQKNwkXaxFyQ"                              // jercos - received 10,000 BTC for pizza in block 57043
 
 	// decode address to get hash160
-	h160, err := encoding.DecodeBase58(address)
+	h160, err := encoding.DecodeBase58(targetAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,17 +171,17 @@ func TestSPVFlow(t *testing.T) {
 			// check each output to see if it pays to our address
 			for j, txOut := range tx.Outputs {
 				// get address from ScriptPubKey
-				addr, err := txOut.ScriptPubKey.Address(false) // false = mainnet
+				addrObj, err := txOut.ScriptPubKey.AddressV2(address.MAINNET)
 				if err != nil {
 					// skip unparseable
 					t.Logf("  Output %d: unparseable address (%v)", j, err)
 					continue
 				}
 
-				//t.Logf("  Output %d: %s (amount: %d sat)", j, addr, txOut.Amount)
-				if addr == address {
+				//t.Logf("  Output %d: %s (amount: %d sat)", j, addrObj.String, txOut.Amount)
+				if addrObj.String == targetAddress {
 					txID, _ := tx.Id()
-					t.Logf("SUCCESS! Found transaction paying to %s", address)
+					t.Logf("SUCCESS! Found transaction paying to %s", targetAddress)
 					t.Logf("  Transaction: %x", txID)
 					t.Logf("  Output index: %d", j)
 					t.Logf("  Amount: %d satoshis", txOut.Amount)

@@ -1,3 +1,56 @@
+# Project Status
+
+## Recently Completed
+
+### Bech32 Address Encoding (BIP 173) ✅
+**Status**: Fully implemented and tested
+
+Implemented complete bech32 encoding for native SegWit addresses:
+- P2WPKH addresses (bc1q... for mainnet, tb1q... for testnet)
+- P2WSH addresses (bc1q... with 32-byte witness programs)
+- Full BIP 173 compliance with official test vectors
+- Polymod checksum calculation
+- 8-bit to 5-bit data conversion
+- HRP (human-readable part) expansion
+
+**Key Bug Fix**: Witness version is already 5-bit compatible (0-16), so it's added directly to the data array rather than being converted from 8-bit.
+
+**Files**:
+- `internal/address/bech32.go` - Core bech32 encoding implementation
+- `internal/address/address.go` - Address type and generation functions
+- `internal/address/address_test.go` - BIP 173 test vectors
+
+### Address API Refactoring ✅
+**Status**: Complete migration across codebase
+
+Refactored address generation to use a unified `internal/address` package:
+
+**Old API** (deprecated):
+```go
+addr := script.Address(testnet bool) string  // Returns string, boolean flags
+addr := publicKey.Address(compressed, testnet bool) string
+```
+
+**New API** (current):
+```go
+addrObj, err := script.AddressV2(network address.Network) (*address.Address, error)
+addrObj, err := address.FromPublicKey(pubkey []byte, addrType address.AddrType, network address.Network)
+addrObj, err := address.FromHash160(hash160 []byte, addrType address.AddrType, network address.Network)
+addrObj, err := address.FromWitnessProgram(version byte, program []byte, network address.Network)
+```
+
+**Benefits**:
+- Type-safe `address.Network` enum (MAINNET, TESTNET) instead of boolean flags
+- Supports all address types: P2PKH, P2SH, P2WPKH, P2WSH
+- Centralized address logic in `internal/address` package
+- Returns structured `Address` object with `.String` property
+- Proper error handling
+
+**Migration Complete**:
+- ✅ All `script.Address()` calls replaced with `script.AddressV2()`
+- ✅ Code examples in README.md updated
+- ✅ No remaining deprecated API usage in codebase
+
 # TODO
 
 ## Concurrency Improvements (High Priority)

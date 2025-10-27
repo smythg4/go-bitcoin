@@ -77,21 +77,29 @@ After completing all chapters, this implementation has been extended with additi
 - **Hash160**: SHA-256 followed by RIPEMD-160 (used for addresses)
 - **MurmurHash3**: 32-bit MurmurHash3 implementation for bloom filters (BIP 37)
 
-### Bitcoin Address Generation (`internal/eccmath`, `internal/script`)
+### Bitcoin Address Generation (`internal/address`)
 - **P2PKH (Pay-to-Public-Key-Hash)** address generation
   - Mainnet addresses (starts with `1`)
   - Testnet addresses (starts with `m` or `n`)
   - Support for both compressed and uncompressed public keys
+  - Base58Check encoding
 - **P2SH (Pay-to-Script-Hash)** address generation
   - Mainnet addresses (starts with `3`)
   - Testnet addresses (starts with `2`)
   - Generate addresses from arbitrary scripts (multisig, timelocks, etc.)
-- **P2WPKH (Pay-to-Witness-Public-Key-Hash)** detection and verification
+  - Base58Check encoding
+- **P2WPKH (Pay-to-Witness-Public-Key-Hash)** address generation
   - Native SegWit (witness version 0)
+  - Mainnet addresses (starts with `bc1q`)
+  - Testnet addresses (starts with `tb1q`)
   - 20-byte pubkey hash witness programs
-- **P2WSH (Pay-to-Witness-Script-Hash)** detection and verification
+  - Bech32 encoding (BIP 173)
+- **P2WSH (Pay-to-Witness-Script-Hash)** address generation
   - Native SegWit (witness version 0)
+  - Mainnet addresses (starts with `bc1q`)
+  - Testnet addresses (starts with `tb1q`)
   - 32-byte script hash witness programs
+  - Bech32 encoding (BIP 173)
 
 ### Variable-Length Integers (`internal/encoding`)
 - **VarInt Encoding**: Compact integer encoding used throughout Bitcoin protocol
@@ -314,19 +322,30 @@ fmt.Printf("Nested SegWit valid: %v\n", valid)  // true!
 ### Generating Keys and Addresses
 
 ```go
+import (
+    "go-bitcoin/internal/address"
+    "go-bitcoin/internal/keys"
+)
+
 // Create a private key from a secret
 secret := big.NewInt(0xdeadbeef54321)
 privateKey := keys.NewPrivateKey(secret)
 
 // Generate public key
 publicKey := privateKey.PublicKey()
+pubkeyBytes := publicKey.Serialize(true) // compressed
 
-// Generate Bitcoin addresses
-mainnetAddr := publicKey.Address(true, false)  // compressed, mainnet
-testnetAddr := publicKey.Address(true, true)   // compressed, testnet
+// Generate P2PKH address (legacy)
+p2pkhAddr, _ := address.FromPublicKey(pubkeyBytes, address.P2PKH, address.MAINNET)
+fmt.Printf("P2PKH address: %s\n", p2pkhAddr.String) // Starts with "1"
 
-fmt.Printf("Mainnet address: %s\n", mainnetAddr)
-fmt.Printf("Testnet address: %s\n", testnetAddr)
+// Generate P2WPKH address (native SegWit)
+p2wpkhAddr, _ := address.FromPublicKey(pubkeyBytes, address.P2WPKH, address.MAINNET)
+fmt.Printf("P2WPKH address: %s\n", p2wpkhAddr.String) // Starts with "bc1q"
+
+// Generate testnet address
+testnetAddr, _ := address.FromPublicKey(pubkeyBytes, address.P2PKH, address.TESTNET)
+fmt.Printf("Testnet address: %s\n", testnetAddr.String) // Starts with "m" or "n"
 
 // Export private key in WIF format
 wif := privateKey.Serialize(true, false)  // compressed, mainnet
@@ -472,8 +491,8 @@ for {
 
         // Check if transaction pays to our address
         for j, output := range tx.Outputs {
-            addr, _ := output.ScriptPubKey.Address(false)
-            if addr == address {
+            addrObj, _ := output.ScriptPubKey.AddressV2(address.MAINNET)
+            if addrObj.String == address {
                 fmt.Printf("Found payment: %d satoshis\n", output.Amount)
                 return
             }

@@ -3,8 +3,8 @@ package script
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
+	"go-bitcoin/internal/address"
 	"go-bitcoin/internal/encoding"
 	"io"
 )
@@ -357,33 +357,49 @@ func P2wshScript(h256 []byte) Script {
 }
 
 func P2pkhAddress(h160 []byte, testNet bool) string {
-	prefix := 0x00
+	network := address.MAINNET
 	if testNet {
-		prefix = 0x6f // testnet prefix
+		network = address.TESTNET
 	}
-	return encoding.EncodeBase58Checksum(append([]byte{byte(prefix)}, h160...))
+	addr, _ := address.FromHash160(h160, address.P2PKH, network)
+	return addr.String
 }
 
 func P2shAddress(h160 []byte, testNet bool) string {
-	prefix := 0x05
+	network := address.MAINNET
 	if testNet {
-		prefix = 0xc4 // testnet prefix
+		network = address.TESTNET
 	}
-	return encoding.EncodeBase58Checksum(append([]byte{byte(prefix)}, h160...))
+	addr, _ := address.FromHash160(h160, address.P2SH, network)
+	return addr.String
 }
 
-func (s *Script) Address(testnet bool) (string, error) {
-	if len(s.CommandStack) < 3 {
-		return "", errors.New("not enough commands")
+func (s *Script) AddressV2(network address.Network) (*address.Address, error) {
+	// check P2PKH pattern (add helper)
+	if s.IsP2pkhScriptPubKey() {
+		hash160 := s.CommandStack[2].Data
+		return address.FromHash160(hash160, address.P2PKH, network)
 	}
-	if IsP2sh(s.CommandStack[0:3]) {
-		h160 := s.CommandStack[1].Data
-		return P2shAddress(h160, testnet), nil
-	} else {
-		// assume p2pkh otherwise
-		h160 := s.CommandStack[2].Data
-		return P2pkhAddress(h160, testnet), nil
+
+	// check for p2sh pattern
+	if s.IsP2shScriptPubKey() {
+		hash160 := s.CommandStack[1].Data
+		return address.FromHash160(hash160, address.P2SH, network)
 	}
+
+	// check for p2wpkh pattern
+	if s.IsP2wpkhScriptPubKey() {
+		witnessProgram := s.CommandStack[1].Data
+		return address.FromWitnessProgram(0, witnessProgram, network)
+	}
+
+	// check for p2wsh pattern
+	if s.IsP2wshScriptPubKey() {
+		witnessProgram := s.CommandStack[1].Data
+		return address.FromWitnessProgram(0, witnessProgram, network)
+	}
+
+	return nil, fmt.Errorf("unknown or unsupported script type")
 }
 
 func (s *Script) IsP2wpkhScriptPubKey() bool {
@@ -406,4 +422,14 @@ func (s *Script) IsP2shScriptPubKey() bool {
 		s.CommandStack[1].IsData &&
 		len(s.CommandStack[1].Data) == 20 &&
 		s.CommandStack[2].Opcode == OP_EQUAL
+}
+
+func (s *Script) IsP2pkhScriptPubKey() bool {
+	return len(s.CommandStack) == 5 &&
+		s.CommandStack[0].Opcode == OP_DUP &&
+		s.CommandStack[1].Opcode == OP_HASH160 &&
+		s.CommandStack[2].IsData &&
+		len(s.CommandStack[2].Data) == 20 &&
+		s.CommandStack[3].Opcode == OP_EQUALVERIFY &&
+		s.CommandStack[4].Opcode == OP_CHECKSIG
 }
