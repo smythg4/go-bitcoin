@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"go-bitcoin/internal/encoding"
 	"go-bitcoin/internal/script"
 	"io"
 	"slices"
@@ -48,10 +49,47 @@ func ParseTxIn(r io.Reader) (TxIn, error) {
 	prevIdx := binary.LittleEndian.Uint32(buf)
 
 	// ScriptSig
-	script, err := script.ParseScript(r)
-	if err != nil {
-		return TxIn{}, err
+	// Check if this is a coinbase input (prevTx is all zeros and prevIdx is 0xffffffff)
+	isCoinbase := prevIdx == 0xffffffff
+	if isCoinbase {
+		for _, b := range prevTx {
+			if b != 0 {
+				isCoinbase = false
+				break
+			}
+		}
 	}
+
+	var scriptSig script.Script
+	if isCoinbase {
+		// Coinbase scriptSig contains arbitrary data, not valid script
+		// Read it as raw bytes without parsing
+		scriptLen, err := encoding.ReadVarInt(r)
+		if err != nil {
+			return TxIn{}, err
+		}
+		scriptBytes := make([]byte, scriptLen)
+		if _, err := io.ReadFull(r, scriptBytes); err != nil {
+			return TxIn{}, err
+		}
+		// Store as a single data command (arbitrary bytes)
+		// Special case: empty scriptSig should have no commands for proper roundtrip
+		if scriptLen == 0 {
+			scriptSig = script.NewScript([]script.ScriptCommand{})
+		} else {
+			scriptSig = script.NewScript([]script.ScriptCommand{
+				{Data: scriptBytes, IsData: true},
+			})
+		}
+	} else {
+		// Regular input - parse as Bitcoin script
+		var err error
+		scriptSig, err = script.ParseScript(r)
+		if err != nil {
+			return TxIn{}, err
+		}
+	}
+
 
 	// Sequence
 	n, err = r.Read(buf)
@@ -63,7 +101,7 @@ func ParseTxIn(r io.Reader) (TxIn, error) {
 	return TxIn{
 		PrevTx:    prevTx,
 		PrevIdx:   prevIdx,
-		ScriptSig: script,
+		ScriptSig: scriptSig,
 		Sequence:  seq,
 	}, nil
 }

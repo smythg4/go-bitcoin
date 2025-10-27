@@ -32,7 +32,7 @@ func main() {
 
 		addr := fmt.Sprintf("%s:%d", ip.String(), port)
 		fmt.Printf("Trying %s...\n", addr)
-		node, err = network.NewSimpleNode(ip.String(), port, false, false)
+		node, err = network.NewSimpleNode(ip.String(), port, false, true)
 		if err != nil {
 			fmt.Printf("  Failed: %v\n", err)
 			continue
@@ -61,7 +61,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 100; i++ {
 		getHeaders := network.NewGetHeadersMessage(70015, [][32]byte{[32]byte(prevHash)}, nil)
 
 		if err := node.Send(&getHeaders); err != nil {

@@ -45,21 +45,35 @@ func (t Transaction) String() string {
 
 func (t *Transaction) Id() (string, error) {
 	// Human readable hexadecimal of the transaction hash
-	hash, err := t.hash()
+	hash, err := t.Hash()
 	if err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("%x", hash), nil
 }
 
-func (t *Transaction) hash() ([]byte, error) {
+func (t *Transaction) Hash() ([32]byte, error) {
 	// Binary hash of the legacy serialization
 	serialized, err := t.SerializeLegacy()
 	if err != nil {
-		return nil, err
+		return [32]byte{}, err
 	}
-	hash := encoding.Hash256(serialized)
-	slices.Reverse(hash)
+	hashSlice := encoding.Hash256(serialized)
+	slices.Reverse(hashSlice)
+	var hash [32]byte
+	copy(hash[:], hashSlice)
+	return hash, nil
+}
+
+func (t *Transaction) WitnessHash() ([32]byte, error) {
+	serialized, err := t.Serialize() // Uses SerializeSegwit for witness txs
+	if err != nil {
+		return [32]byte{}, err
+	}
+	hashSlice := encoding.Hash256(serialized)
+	slices.Reverse(hashSlice)
+	var hash [32]byte
+	copy(hash[:], hashSlice)
 	return hash, nil
 }
 

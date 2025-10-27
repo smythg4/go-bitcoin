@@ -62,7 +62,11 @@ func NewSimpleNode(host string, port int, testNet, logging bool) (*SimpleNode, e
 	sn.RegisterChannel("headers", 1)
 	sn.RegisterChannel("block", 1)
 	sn.RegisterChannel("merkleblock", 1)
-	sn.RegisterChannel("tx", 10)
+	sn.RegisterChannel("tx", 25)
+	sn.RegisterChannel("cmpctblock", 1)
+	sn.RegisterChannel("getblocktxn", 1)
+	sn.RegisterChannel("blocktxn", 1)
+	sn.RegisterChannel("sendcmpct", 1)
 	sn.wg.Add(3)
 
 	go sn.readLoop()
@@ -77,15 +81,6 @@ func NewSimpleNode(host string, port int, testNet, logging bool) (*SimpleNode, e
 		pong := &PongMessage{Nonce: env.Payload}
 		sn.Send(pong)
 	})
-
-	// Auto-respond to version with verack (for incoming connections)
-	// sn.OnMessage("version", func(env NetworkEnvelope) {
-	// 	if sn.Logging {
-	// 		fmt.Println("Auto-responding to version with verack")
-	// 	}
-	// 	verack := &VerackMessage{}
-	// 	sn.Send(verack)
-	// })
 
 	// Log received verack (no response needed)
 	sn.OnMessage("verack", func(env NetworkEnvelope) {
@@ -244,6 +239,9 @@ func (sn *SimpleNode) OnMessage(command string, handler MessageHandler) {
 
 func (sn *SimpleNode) Handshake() error {
 	msg := DefaultVersionMessage(net.IP(sn.Addr.Address[:]), sn.Addr.Port)
+	if sn.Logging {
+		fmt.Printf("📤 Sending version message with Services: %d\n", msg.Services)
+	}
 	err := sn.Send(&msg)
 	if err != nil {
 		return err
@@ -281,6 +279,27 @@ func (sn *SimpleNode) Receive(command string) (NetworkEnvelope, error) {
 		}
 		return env, nil
 	case <-timeout.C:
+		return NetworkEnvelope{}, fmt.Errorf("timeout waiting for %s", command)
+	case <-sn.done:
+		return NetworkEnvelope{}, errors.New("connection closed")
+	}
+}
+
+func (sn *SimpleNode) ReceiveWithTimeout(command string, timeout time.Duration) (NetworkEnvelope, error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	var ch chan NetworkEnvelope
+	var ok bool
+	if ch, ok = sn.channelsMap[command]; !ok {
+		return NetworkEnvelope{}, errors.New("unknown command")
+	}
+	select {
+	case env, ok := <-ch:
+		if !ok {
+			return NetworkEnvelope{}, errors.New("connection closed")
+		}
+		return env, nil
+	case <-timer.C:
 		return NetworkEnvelope{}, fmt.Errorf("timeout waiting for %s", command)
 	case <-sn.done:
 		return NetworkEnvelope{}, errors.New("connection closed")

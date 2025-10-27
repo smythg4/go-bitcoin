@@ -54,7 +54,7 @@ func DefaultVersionMessage(remoteIP net.IP, port uint16) VersionMessage {
 	copy(addr[:], ip16)
 	return VersionMessage{
 		Version:   70015,
-		Services:  0,
+		Services:  8, // NODE_WITNESS (1<<3)
 		TimeStamp: time.Now().Unix(),
 		SenderAddr: NetAddr{
 			Services: 0,

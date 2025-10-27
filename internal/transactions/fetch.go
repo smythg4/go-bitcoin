@@ -76,41 +76,13 @@ func (tf *TxFetcher) Fetch(txId string, testNet, fresh bool) (*Transaction, erro
 	return &tx, nil
 }
 
-// isLegacyTransaction checks if a transaction uses legacy P2PKH (not SegWit)
-// Uses a fast heuristic: SegWit transactions have empty/short ScriptSigs
-func (tf *TxFetcher) isLegacyTransaction(txId string, testNet bool) (bool, error) {
-	tx, err := tf.Fetch(txId, testNet, false)
-	if err != nil {
-		return false, err
-	}
-
-	// Fast heuristic: SegWit transactions have empty or very short ScriptSigs
-	// Legacy P2PKH ScriptSigs are typically 100+ bytes (sig + pubkey)
-	for _, input := range tx.Inputs {
-		scriptSigLen := len(input.ScriptSig.CommandStack)
-
-		// SegWit typically has 0 commands in ScriptSig (witness is separate)
-		// Legacy P2PKH has 2 commands: <sig> <pubkey>
-		if scriptSigLen < 2 {
-			return false, nil
-		}
-
-		// Double check: if we have commands, first should be data (signature)
-		if !input.ScriptSig.CommandStack[0].IsData {
-			return false, nil
-		}
-	}
-
-	return true, nil
-}
-
-// FetchRecentLegacyTxIds fetches up to maxCount recent legacy transaction IDs
-// with a timeout. Checks multiple recent blocks and skips SegWit transactions.
-func (tf *TxFetcher) FetchRecentLegacyTxIds(testNet bool, maxCount int, maxCheckPerBlock int, maxBlocks int, timeout time.Duration) ([]string, error) {
+// FetchRecentTxIds fetches up to maxCount recent transaction IDs from the blockchain
+// with a timeout. Checks multiple recent blocks (excluding coinbase transactions).
+func (tf *TxFetcher) FetchRecentTxIds(testNet bool, maxCount int, maxCheckPerBlock int, maxBlocks int, timeout time.Duration) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	legacyTxIds := []string{}
+	txIds := []string{}
 
 	// Get the latest block hash
 	url := fmt.Sprintf("%s/blocks/tip/hash", tf.GetUrl(testNet))
@@ -128,72 +100,50 @@ func (tf *TxFetcher) FetchRecentLegacyTxIds(testNet bool, maxCount int, maxCheck
 	currentBlockHash := string(blockHash)
 
 	// Check multiple recent blocks
-	for blockNum := 0; blockNum < maxBlocks && len(legacyTxIds) < maxCount; blockNum++ {
+	for blockNum := 0; blockNum < maxBlocks && len(txIds) < maxCount; blockNum++ {
 		// Check timeout
 		select {
 		case <-ctx.Done():
-			fmt.Printf("Timeout reached\n")
-			return legacyTxIds, nil
+			return txIds, nil
 		default:
 		}
-
-		fmt.Printf("\nChecking block %d: %s\n", blockNum+1, currentBlockHash)
 
 		// Get transaction IDs from this block
 		url = fmt.Sprintf("%s/block/%s/txids", tf.GetUrl(testNet), currentBlockHash)
 		resp, err = http.Get(url)
 		if err != nil {
-			fmt.Printf("Error fetching block txids: %v\n", err)
 			break
 		}
 
-		var txids []string
-		if err := json.NewDecoder(resp.Body).Decode(&txids); err != nil {
+		var blockTxIds []string
+		if err := json.NewDecoder(resp.Body).Decode(&blockTxIds); err != nil {
 			resp.Body.Close()
-			fmt.Printf("Error decoding txids: %v\n", err)
 			break
 		}
 		resp.Body.Close()
 
-		fmt.Printf("Found %d transactions in block\n", len(txids))
-
 		// Skip coinbase (index 0) and check up to maxCheckPerBlock transactions
 		maxToCheck := maxCheckPerBlock
-		if maxToCheck > len(txids)-1 {
-			maxToCheck = len(txids) - 1
+		if maxToCheck > len(blockTxIds)-1 {
+			maxToCheck = len(blockTxIds) - 1
 		}
 
-		for i := 1; i <= maxToCheck && len(legacyTxIds) < maxCount; i++ {
+		for i := 1; i <= maxToCheck && len(txIds) < maxCount; i++ {
 			// Check timeout
 			select {
 			case <-ctx.Done():
-				fmt.Printf("Timeout reached\n")
-				return legacyTxIds, nil
+				return txIds, nil
 			default:
 			}
 
-			txId := txids[i]
-			fmt.Printf("  Checking tx %d/%d... ", i, maxToCheck)
-
-			isLegacy, err := tf.isLegacyTransaction(txId, testNet)
-			if err != nil {
-				fmt.Printf("error (skipping)\n")
-				continue
-			}
-
-			if isLegacy {
-				fmt.Printf("✓ legacy\n")
-				legacyTxIds = append(legacyTxIds, txId)
-			} else {
-				fmt.Printf("SegWit (skipping)\n")
-			}
+			txId := blockTxIds[i]
+			txIds = append(txIds, txId)
 		}
 
 		// Get previous block hash for next iteration
 		url = fmt.Sprintf("%s/block/%s", tf.GetUrl(testNet), currentBlockHash)
 		resp, err = http.Get(url)
 		if err != nil {
-			fmt.Printf("Error fetching block info: %v\n", err)
 			break
 		}
 
@@ -202,7 +152,6 @@ func (tf *TxFetcher) FetchRecentLegacyTxIds(testNet bool, maxCount int, maxCheck
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&blockInfo); err != nil {
 			resp.Body.Close()
-			fmt.Printf("Error decoding block info: %v\n", err)
 			break
 		}
 		resp.Body.Close()
@@ -215,7 +164,7 @@ func (tf *TxFetcher) FetchRecentLegacyTxIds(testNet bool, maxCount int, maxCheck
 		currentBlockHash = blockInfo.PreviousBlockHash
 	}
 
-	return legacyTxIds, nil
+	return txIds, nil
 }
 
 // FetchAddressTransactions fetches all transaction IDs for a given address

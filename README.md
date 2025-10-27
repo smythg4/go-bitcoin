@@ -18,6 +18,18 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
 
 **🎉 Book Complete!** All chapters from Programming Bitcoin have been successfully implemented and tested.
 
+## Beyond the Book
+
+After completing all chapters, this implementation has been extended with additional Bitcoin protocol features:
+
+**BIP 152: Compact Block Relay** ✅
+- Full compact block negotiation and transmission
+- SipHash-2-4 shortID calculation for bandwidth optimization
+- Mempool-based transaction matching (25-60% bandwidth savings)
+- Automatic fallback with `getblocktxn`/`blocktxn` messages
+- Support for both version 1 (txid) and version 2 (wtxid)
+- Successfully tested against Bitcoin mainnet with real blocks
+
 ## Features
 
 ### Finite Field Arithmetic (`internal/eccmath`)
@@ -184,15 +196,19 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
 - **Bitcoin P2P Protocol**: Full network message handling
 - **Network Envelope**: Magic bytes, command, payload length, checksum
 - **Message Types**:
-  - Version handshake (protocol version negotiation)
+  - Version handshake (protocol version negotiation with NODE_WITNESS flag)
   - Verack acknowledgment
   - Ping/Pong keepalive
   - GetHeaders (request block headers)
   - Headers response (batch header delivery)
   - FilterLoad (bloom filter transmission - BIP 37)
-  - GetData (request filtered blocks or transactions)
+  - GetData (request filtered blocks or transactions with MSG_WITNESS_TX support)
   - MerkleBlock (filtered block with merkle proof)
-  - Tx (transaction data)
+  - Tx (transaction data with witness support)
+  - **SendCmpct** (compact block negotiation - BIP 152)
+  - **CmpctBlock** (compact block transmission - BIP 152)
+  - **GetBlockTxn** (request missing transactions - BIP 152)
+  - **BlockTxn** (missing transaction response - BIP 152)
 - **Connection Management**:
   - TCP connection handling with timeouts
   - Concurrent read/write loops with goroutines
@@ -201,6 +217,15 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
   - Graceful shutdown with sync.WaitGroup
 - **Auto-responses**: Automatic ping/pong handling
 - **Block Header Download**: Download and validate blockchain headers from peers
+- **Compact Blocks (BIP 152)**:
+  - Protocol version negotiation (supports v1/txid and v2/wtxid)
+  - High-bandwidth and low-bandwidth modes
+  - SipHash-2-4 shortID calculation with proper byte ordering
+  - Mempool matching for bandwidth optimization
+  - Differential encoding for prefilled transaction indexes
+  - Automatic fallback to full transaction request
+  - Successfully tested on mainnet with 25-60% bandwidth savings
+  - Handles coinbase transactions correctly (arbitrary data in scriptSig)
 
 ### Merkle Trees & SPV (`internal/encoding`, `internal/network`)
 - **Merkle Tree Construction**: Build complete merkle trees from transaction hashes
@@ -223,6 +248,16 @@ A Bitcoin implementation in Go, following **Programming Bitcoin** by Jimmy Song.
   - Receive and validate merkleblocks
   - Verify transactions without downloading full blockchain
   - Successfully tested against Bitcoin mainnet (found historic pizza transaction!)
+
+### Mempool & ShortIDs (`internal/mempool`)
+- **Transaction Pool**: In-memory transaction storage indexed by txid
+- **Thread-Safe Operations**: Concurrent access with mutex protection
+- **SipHash-2-4 Implementation**: Fast keyed hash function for shortID calculation
+- **ShortID Matching**: Match compact block shortIDs to mempool transactions
+  - Correct byte order handling (internal vs display order)
+  - Support for both txid (v1) and wtxid (v2) matching
+  - Efficient O(1) lookup using hash maps
+- **Key Derivation**: Calculate SipHash keys from block header + nonce
 
 ## Example Usage
 
@@ -481,19 +516,25 @@ go-bitcoin/
     │   └── bip143_manual_test.go # Manual BIP 143 preimage construction
     ├── block/
     │   └── block.go             # Block header parsing and proof of work
-    └── network/
-        ├── node.go              # P2P node with concurrent message handling
-        ├── network.go           # Network envelope parsing
-        ├── version.go           # Version message
-        ├── verack.go            # Verack message
-        ├── pong.go              # Pong message
-        ├── getheaders.go        # GetHeaders and Headers messages
-        ├── bloomfilter.go       # Bloom filter creation and FilterLoad message
-        ├── getdata.go           # GetData message for requesting blocks/txs
-        ├── merkleblock.go       # MerkleBlock parsing and validation
-        ├── generic.go           # Generic message types
-        ├── bloom_test.go        # Bloom filter tests
-        └── spv_test.go          # Full SPV client integration test
+    ├── network/
+    │   ├── node.go              # P2P node with concurrent message handling
+    │   ├── network.go           # Network envelope parsing
+    │   ├── version.go           # Version message with NODE_WITNESS flag
+    │   ├── verack.go            # Verack message
+    │   ├── pong.go              # Pong message
+    │   ├── getheaders.go        # GetHeaders and Headers messages
+    │   ├── bloomfilter.go       # Bloom filter creation and FilterLoad message
+    │   ├── getdata.go           # GetData message (supports MSG_WITNESS_TX)
+    │   ├── merkleblock.go       # MerkleBlock parsing and validation
+    │   ├── compact.go           # BIP 152 compact block messages
+    │   ├── compact_test.go      # Compact block integration test (mainnet)
+    │   ├── generic.go           # Generic message types
+    │   ├── bloom_test.go        # Bloom filter tests
+    │   └── spv_test.go          # Full SPV client integration test
+    └── mempool/
+        ├── mempool.go           # Transaction pool and shortID matching
+        ├── shortid.go           # SipHash-2-4 implementation
+        └── shortid_test.go      # ShortID calculation tests
 ```
 
 ## Architecture Highlights
@@ -539,11 +580,16 @@ Go's strong typing prevents entire classes of bugs:
 - Stack-based Script VM with comprehensive opcode support
 - Concurrent P2P networking with goroutines and channels
 - RIPEMD-160 via `golang.org/x/crypto` (legacy hash, required for Bitcoin)
+- **BIP 152 Compact Blocks**: Bandwidth optimization with mempool matching
+  - Proper byte order handling (internal vs display order for txid/wtxid)
+  - Coinbase transaction handling (arbitrary data in scriptSig)
+  - Successfully tested on mainnet achieving 25-60% bandwidth savings
 - Comprehensive test suite including:
   - Real mainnet SegWit transaction verification
   - Official BIP 143 test vectors
   - SHA-1 collision detection (SHAttered attack)
   - SPV client with bloom filters
+  - Compact block negotiation and reconstruction with live mainnet nodes
 
 ## Standards Implemented
 
@@ -558,6 +604,7 @@ Go's strong typing prevents entire classes of bugs:
 - **BIP-141**: Segregated Witness (consensus layer)
 - **BIP-143**: Transaction signature verification for version 0 witness program
 - **BIP-144**: Peer services for Segregated Witness
+- **BIP-152**: Compact Block Relay (bandwidth optimization)
 
 ## Test Coverage
 
@@ -583,6 +630,9 @@ go test -v ./internal/encoding/ -run TestMerkle
 
 # Run bloom filter tests
 go test -v ./internal/network/ -run TestBloom
+
+# Run compact block tests (requires mainnet connection, can take 10-20 minutes)
+go test -v ./internal/network/ -run TestCompactBlock -timeout 20m
 
 # Run all tests
 go test ./...

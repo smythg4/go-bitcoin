@@ -103,3 +103,94 @@ func BitFieldToBytes(bitField []byte) ([]byte, error) {
 	}
 	return result, nil
 }
+
+func SipHash24(key0, key1 uint64, data []byte) uint64 {
+	// Initialize state with keys
+	v0 := key0 ^ 0x736f6d6570736575
+	v1 := key1 ^ 0x646f72616e646f6d
+	v2 := key0 ^ 0x6c7967656e657261
+	v3 := key1 ^ 0x7465646279746573
+
+	// Process full 8-byte blocks
+	length := len(data)
+	left := length & 7 // remaining bytes after 8-byte blocks
+	blocks := length - left
+
+	for i := 0; i < blocks; i += 8 {
+		// Read 8 bytes as little-endian uint64
+		m := uint64(data[i]) |
+			uint64(data[i+1])<<8 |
+			uint64(data[i+2])<<16 |
+			uint64(data[i+3])<<24 |
+			uint64(data[i+4])<<32 |
+			uint64(data[i+5])<<40 |
+			uint64(data[i+6])<<48 |
+			uint64(data[i+7])<<56
+
+		// Compression: 2 rounds
+		v3 ^= m
+		sipRound(&v0, &v1, &v2, &v3)
+		sipRound(&v0, &v1, &v2, &v3)
+		v0 ^= m
+	}
+
+	// Process remaining bytes (0-7 bytes)
+	var b uint64 = uint64(length) << 56
+	switch left {
+	case 7:
+		b |= uint64(data[blocks+6]) << 48
+		fallthrough
+	case 6:
+		b |= uint64(data[blocks+5]) << 40
+		fallthrough
+	case 5:
+		b |= uint64(data[blocks+4]) << 32
+		fallthrough
+	case 4:
+		b |= uint64(data[blocks+3]) << 24
+		fallthrough
+	case 3:
+		b |= uint64(data[blocks+2]) << 16
+		fallthrough
+	case 2:
+		b |= uint64(data[blocks+1]) << 8
+		fallthrough
+	case 1:
+		b |= uint64(data[blocks])
+	}
+
+	// Final compression
+	v3 ^= b
+	sipRound(&v0, &v1, &v2, &v3)
+	sipRound(&v0, &v1, &v2, &v3)
+	v0 ^= b
+
+	// Finalization: XOR 0xff into v2, then 4 rounds
+	v2 ^= 0xff
+	sipRound(&v0, &v1, &v2, &v3)
+	sipRound(&v0, &v1, &v2, &v3)
+	sipRound(&v0, &v1, &v2, &v3)
+	sipRound(&v0, &v1, &v2, &v3)
+
+	return v0 ^ v1 ^ v2 ^ v3
+}
+
+func sipRound(v0, v1, v2, v3 *uint64) {
+	*v0 += *v1
+	*v1 = (*v1 << 13) | (*v1 >> (64 - 13))
+	*v1 ^= *v0
+	*v0 = (*v0 << 32) | (*v0 >> (64 - 32))
+
+	*v2 += *v3
+	*v3 = (*v3 << 16) | (*v3 >> (64 - 16))
+	*v3 ^= *v2
+
+	*v0 += *v3
+	*v3 = (*v3 << 21) | (*v3 >> (64 - 21))
+	*v3 ^= *v0
+
+	*v2 += *v1
+	*v1 = (*v1 << 17) | (*v1 >> (64 - 17))
+	*v1 ^= *v2
+	*v2 = (*v2 << 32) | (*v2 >> (64 - 32))
+}

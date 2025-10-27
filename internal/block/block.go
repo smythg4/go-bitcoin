@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"go-bitcoin/internal/encoding"
+
 	"io"
 	"math/big"
 	"slices"
