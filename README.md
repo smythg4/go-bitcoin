@@ -30,6 +30,14 @@ After completing all chapters, this implementation has been extended with additi
 - Support for both version 1 (txid) and version 2 (wtxid)
 - Successfully tested against Bitcoin mainnet with real blocks
 
+**BIP 173: Bech32 Address Encoding** ✅
+- Complete bech32 encoding for native SegWit addresses
+- P2WPKH address generation (bc1q... / tb1q...)
+- P2WSH address generation (bc1q... for 32-byte witness programs)
+- Polymod checksum calculation and validation
+- 8-bit to 5-bit data conversion for witness programs
+- Fully compliant with BIP 173 specification and test vectors
+
 ## Features
 
 ### Finite Field Arithmetic (`internal/eccmath`)
@@ -661,7 +669,6 @@ go test ./...
 
 While this implementation successfully completes all chapters of Programming Bitcoin, there are some features present in production implementations that are not included:
 
-- **Bech32 address encoding** (BIP 173) - Can verify bc1... transactions but cannot generate bc1... addresses
 - **RFC 6979 deterministic signatures** - Uses crypto/rand instead of deterministic k generation
 - **Timelock opcodes** - OP_CHECKLOCKTIMEVERIFY (BIP 65) and OP_CHECKSEQUENCEVERIFY (BIP 112) not implemented
 - **Additional opcodes** - ~50 opcodes not yet implemented (OP_OVER, OP_PICK, OP_ROLL, OP_MIN, OP_MAX, etc.)
