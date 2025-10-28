@@ -10,6 +10,24 @@ import (
 const BIP37_CONSTANT uint32 = 0xfba4c795
 const SIGHASH_ALL uint32 = 1
 
+// MurmurHash3 constants
+const (
+	MURMUR3_C1         uint32 = 0xcc9e2d51
+	MURMUR3_C2         uint32 = 0x1b873593
+	MURMUR3_SEED       uint32 = 0xe6546b64
+	MURMUR3_FMIX_C1    uint32 = 0x85ebca6b
+	MURMUR3_FMIX_C2    uint32 = 0xc2b2ae35
+)
+
+// SipHash-2-4 initialization constants
+const (
+	SIPHASH_INIT_V0 uint64 = 0x736f6d6570736575
+	SIPHASH_INIT_V1 uint64 = 0x646f72616e646f6d
+	SIPHASH_INIT_V2 uint64 = 0x6c7967656e657261
+	SIPHASH_INIT_V3 uint64 = 0x7465646279746573
+	SIPHASH_FINAL   uint64 = 0xff
+)
+
 func Hash256(data []byte) []byte {
 	first := sha256.Sum256(data)
 	second := sha256.Sum256(first[:])
@@ -25,9 +43,6 @@ func Hash160(data []byte) []byte {
 }
 
 func MurmurHash3(data []byte, seed uint32) uint32 {
-	c1 := uint32(0xcc9e2d51)
-	c2 := uint32(0x1b873593)
-
 	length := len(data)
 	h1 := uint32(seed)
 	roundedEnd := length & 0xfffffffc // round down to 4 byte block
@@ -38,13 +53,13 @@ func MurmurHash3(data []byte, seed uint32) uint32 {
 			(uint32(data[i+1]&0xff) << 8) |
 			(uint32(data[i+2]&0xff) << 16) |
 			(uint32(data[i+3]) << 24)
-		k1 *= c1
+		k1 *= MURMUR3_C1
 		k1 = (k1 << 15) | (k1 >> 17) // ROTL32(k1, 15)
-		k1 *= c2
+		k1 *= MURMUR3_C2
 
 		h1 ^= k1
 		h1 = (h1 << 13) | (h1 >> 19) // ROTL32(h1, 13)
-		h1 = h1*5 + 0xe6546b64
+		h1 = h1*5 + MURMUR3_SEED
 	}
 
 	// tail (remaining 1-3 bytes)
@@ -59,9 +74,9 @@ func MurmurHash3(data []byte, seed uint32) uint32 {
 	}
 	if val >= 1 {
 		k1 |= uint32(data[roundedEnd] & 0xff)
-		k1 *= c1
+		k1 *= MURMUR3_C1
 		k1 = (k1 << 15) | (k1 >> 17) // ROTL(k1, 15)
-		k1 *= c2
+		k1 *= MURMUR3_C2
 		h1 ^= k1
 	}
 
@@ -70,9 +85,9 @@ func MurmurHash3(data []byte, seed uint32) uint32 {
 
 	// fmix(h1)
 	h1 ^= h1 >> 16
-	h1 *= 0x85ebca6b
+	h1 *= MURMUR3_FMIX_C1
 	h1 ^= h1 >> 13
-	h1 *= 0xc2b2ae35
+	h1 *= MURMUR3_FMIX_C2
 	h1 ^= h1 >> 16
 
 	return h1
@@ -106,10 +121,10 @@ func BitFieldToBytes(bitField []byte) ([]byte, error) {
 
 func SipHash24(key0, key1 uint64, data []byte) uint64 {
 	// Initialize state with keys
-	v0 := key0 ^ 0x736f6d6570736575
-	v1 := key1 ^ 0x646f72616e646f6d
-	v2 := key0 ^ 0x6c7967656e657261
-	v3 := key1 ^ 0x7465646279746573
+	v0 := key0 ^ SIPHASH_INIT_V0
+	v1 := key1 ^ SIPHASH_INIT_V1
+	v2 := key0 ^ SIPHASH_INIT_V2
+	v3 := key1 ^ SIPHASH_INIT_V3
 
 	// Process full 8-byte blocks
 	length := len(data)
@@ -166,7 +181,7 @@ func SipHash24(key0, key1 uint64, data []byte) uint64 {
 	v0 ^= b
 
 	// Finalization: XOR 0xff into v2, then 4 rounds
-	v2 ^= 0xff
+	v2 ^= SIPHASH_FINAL
 	sipRound(&v0, &v1, &v2, &v3)
 	sipRound(&v0, &v1, &v2, &v3)
 	sipRound(&v0, &v1, &v2, &v3)

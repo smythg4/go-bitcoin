@@ -50,7 +50,7 @@ func ParseTxIn(r io.Reader) (TxIn, error) {
 
 	// ScriptSig
 	// Check if this is a coinbase input (prevTx is all zeros and prevIdx is 0xffffffff)
-	isCoinbase := prevIdx == 0xffffffff
+	isCoinbase := prevIdx == COINBASE_PREVOUT
 	if isCoinbase {
 		for _, b := range prevTx {
 			if b != 0 {

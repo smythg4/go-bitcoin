@@ -243,10 +243,19 @@ func (s Script) Combine(scriptPubKey Script) Script {
 	}
 }
 
-func (s *Script) Evaluate(sighash []byte, witness [][]byte) bool {
+func (s *Script) Evaluate(sighash []byte) bool {
 	engine := NewScriptEngine(*s)
-	engine.witness = witness // Store witness for later use
 	return engine.Execute(sighash)
+}
+
+// EvaluateWithContext evaluates the script with full transaction context for BIP 65/112
+func (s *Script) EvaluateWithContext(sighash []byte, witness [][]byte, locktime, sequence uint32) bool {
+	engine := NewScriptEngine(*s)
+	return engine.
+		WithWitness(witness).
+		WithLocktime(locktime).
+		WithSequence(sequence).
+		Execute(sighash)
 }
 
 func EncodeNum(n int64) []byte {

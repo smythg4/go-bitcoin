@@ -13,7 +13,24 @@ import (
 	"time"
 )
 
-const LOWEST_BITS uint32 = 0x1d00ffff // maximum target (difficulty 1)
+// Difficulty and target constants
+const (
+	LOWEST_BITS uint32 = 0x1d00ffff // maximum target (difficulty 1)
+
+	// Difficulty target encoding constants
+	BITS_COEFF_MASK    uint32 = 0x00ffffff // Mask for coefficient (lower 3 bytes)
+	BITS_HIGH_BIT_MASK byte   = 0x7f       // High bit threshold for sign detection
+	DIFF_BASE_COEFF    uint32 = 0xffff     // Base coefficient for difficulty calculation
+	DIFF_BASE_EXP      uint32 = 0x1d       // Base exponent for difficulty calculation
+
+	// Difficulty adjustment period (2,016 blocks = 2 weeks at 10 min/block)
+	TWO_WEEKS       int64 = 60 * 60 * 24 * 14
+	EIGHT_WEEKS     int64 = TWO_WEEKS * 4
+	THREE_HALF_DAYS int64 = TWO_WEEKS / 4
+
+	// Opcodes (for filter construction)
+	OP_RETURN byte = 0x6a
+)
 
 var TESTNET_GENESIS_BLOCK = []byte{
 	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -152,8 +169,8 @@ func (b *Block) IsBip141() bool {
 }
 
 func (b *Block) bitsToTarget() *big.Int {
-	exponent := b.Bits >> 24     // take last (high) byte
-	coeff := b.Bits & 0x00ffffff // take the other bytes
+	exponent := b.Bits >> 24       // take last (high) byte
+	coeff := b.Bits & BITS_COEFF_MASK // take the other bytes
 
 	target := big.NewInt(int64(coeff))
 
@@ -172,7 +189,7 @@ func TargetToBits(target *big.Int) uint32 {
 	rawBytes := target.Bytes()
 
 	// if high bit is set, prepend 0x00 to avoid negative interpretation
-	if len(rawBytes) > 0 && rawBytes[0] > 0x7f {
+	if len(rawBytes) > 0 && rawBytes[0] > BITS_HIGH_BIT_MASK {
 		rawBytes = append([]byte{0x00}, rawBytes...)
 	}
 	exponent := uint32(len(rawBytes))
@@ -194,11 +211,10 @@ func TargetToBits(target *big.Int) uint32 {
 }
 
 func (b *Block) Difficulty() *big.Int {
-	// 0xffff and 0x1d are constants associated with the Bitcoin difficulty formula
-	// difficulty = ( 0xffff * 256 ^ (0x1d-3) ) / target
+	// difficulty = ( DIFF_BASE_COEFF * 256 ^ (DIFF_BASE_EXP-3) ) / target
 	target := b.bitsToTarget()
-	diffBase := big.NewInt(int64(0xffff))
-	diffBase.Lsh(diffBase, uint(8*(0x1d-3)))
+	diffBase := big.NewInt(int64(DIFF_BASE_COEFF))
+	diffBase.Lsh(diffBase, uint(8*(DIFF_BASE_EXP-3)))
 	diff := new(big.Int).Div(diffBase, target)
 	return diff
 }
@@ -213,17 +229,16 @@ func (b *Block) CheckProofOfWork() bool {
 
 func (b *Block) CalcNewBits(firstBlock, lastBlock Block) uint32 {
 	// calculates the new bits given the first and last block of a 2,016 block difficulty adjustment period
-	const TWO_WEEKS = 60 * 60 * 24 * 14
-	EIGHT_WEEKS := big.NewInt(TWO_WEEKS * 4)
-	THREE_HALF_DAYS := big.NewInt(TWO_WEEKS / 4)
+	eightWeeks := big.NewInt(EIGHT_WEEKS)
+	threeHalfDays := big.NewInt(THREE_HALF_DAYS)
 
 	timeDiff := big.NewInt(int64(lastBlock.TimeStamp - firstBlock.TimeStamp))
 
-	if timeDiff.Cmp(EIGHT_WEEKS) > 0 {
-		timeDiff = EIGHT_WEEKS
+	if timeDiff.Cmp(eightWeeks) > 0 {
+		timeDiff = eightWeeks
 	}
-	if timeDiff.Cmp(THREE_HALF_DAYS) < 0 {
-		timeDiff = THREE_HALF_DAYS
+	if timeDiff.Cmp(threeHalfDays) < 0 {
+		timeDiff = threeHalfDays
 	}
 	newTarget := new(big.Int).Mul(lastBlock.bitsToTarget(), timeDiff)
 	newTarget.Div(newTarget, big.NewInt(TWO_WEEKS))
@@ -302,8 +317,8 @@ func (fb *FullBlock) ExtractBasicFilterItems(prevOutputScripts [][]byte) [][]byt
 				continue
 			}
 
-			// skip OP_RETURN outputs (opcode 0x6a)
-			if scriptBytes[0] == 0x6a {
+			// skip OP_RETURN outputs
+			if scriptBytes[0] == OP_RETURN {
 				continue
 			}
 

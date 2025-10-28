@@ -10,14 +10,9 @@ import (
 	"time"
 )
 
-const TESTNET_PORT int = 18333
-const MAINNET_PORT int = 8333
-const MAINNET_SEEDS string = "seed.bitcoin.sipa.be"
-const TESTNET_SEEDS string = "testnet-seed.bitcoin.jonasschnelli.ch"
-
 func main() {
-	dns := MAINNET_SEEDS
-	port := MAINNET_PORT
+	dns := network.MAINNET_SEEDS
+	port := network.MAINNET_PORT
 	genBlockReader := bytes.NewReader(block.MAINNET_GENESIS_BLOCK)
 
 	ips, err := net.LookupIP(dns)

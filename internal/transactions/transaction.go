@@ -12,6 +12,18 @@ import (
 	"slices"
 )
 
+// SegWit (BIP 141) constants
+const (
+	SEGWIT_MARKER byte = 0x00 // SegWit marker byte
+	SEGWIT_FLAG   byte = 0x01 // SegWit flag byte
+)
+
+// Input sequence constants
+const (
+	SEQUENCE_FINAL   uint32 = 0xffffffff // Finalized sequence (disables locktime)
+	COINBASE_PREVOUT uint32 = 0xffffffff // Coinbase previous output index
+)
+
 type Transaction struct {
 	Version   uint32
 	Inputs    []TxIn
@@ -165,7 +177,7 @@ func (t *Transaction) SerializeSegwit() ([]byte, error) {
 	}
 
 	// marker and flag bytes
-	n, err = result.Write([]byte{0x00, 0x01})
+	n, err = result.Write([]byte{SEGWIT_MARKER, SEGWIT_FLAG})
 	if err != nil || n != 2 {
 		return nil, fmt.Errorf("tx serialization error (marker/flag) - %w", err)
 	}
@@ -590,7 +602,7 @@ func (t *Transaction) VerifyInput(inputIndex int) (bool, error) {
 	combinedScript := input.ScriptSig.Combine(scriptPubKey)
 
 	// evaluate
-	return combinedScript.Evaluate(z, witness), nil
+	return combinedScript.EvaluateWithContext(z, witness, 0, 0), nil
 }
 
 func (t *Transaction) Verify() (bool, error) {
@@ -662,7 +674,7 @@ func (t *Transaction) isCoinbase() bool {
 		return false
 	}
 	// the one input must have a previous index of ffffffff
-	if t.Inputs[0].PrevIdx != 0xffffffff {
+	if t.Inputs[0].PrevIdx != COINBASE_PREVOUT {
 		return false
 	}
 	return true

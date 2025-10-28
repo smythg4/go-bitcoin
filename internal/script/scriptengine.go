@@ -73,6 +73,10 @@ const (
 	OP_CHECKSIG       byte = 0xac
 	OP_CHECKSIGVERIFY byte = 0xad
 	OP_CHECKMULTISIG  byte = 0xae
+
+	// locktime
+	OP_CHECKLOCKTIMEVERIFY byte = 0xb1
+	OP_CHECKSEQUENCEVERIFY byte = 0xb2
 )
 
 type ScriptEngine struct {
@@ -82,6 +86,9 @@ type ScriptEngine struct {
 	pc       int
 	z        []byte
 	witness  [][]byte
+	// BIP 65/112 context
+	locktime uint32
+	sequence uint32
 }
 
 func NewScriptEngine(script Script) ScriptEngine {
@@ -90,6 +97,24 @@ func NewScriptEngine(script Script) ScriptEngine {
 		commands: script.CommandStack,
 		pc:       0,
 	}
+}
+
+// WithLocktime sets the transaction locktime for OP_CHECKLOCKTIMEVERIFY (BIP 65)
+func (se *ScriptEngine) WithLocktime(locktime uint32) *ScriptEngine {
+	se.locktime = locktime
+	return se
+}
+
+// WithSequence sets the input sequence for OP_CHECKSEQUENCEVERIFY (BIP 112)
+func (se *ScriptEngine) WithSequence(sequence uint32) *ScriptEngine {
+	se.sequence = sequence
+	return se
+}
+
+// WithWitness sets the witness data for SegWit transactions
+func (se *ScriptEngine) WithWitness(witness [][]byte) *ScriptEngine {
+	se.witness = witness
+	return se
 }
 
 func (se *ScriptEngine) pop() (ScriptCommand, bool) {
@@ -343,6 +368,10 @@ func (se *ScriptEngine) ExecuteCommand(cmd ScriptCommand) bool {
 		return se.OpVerify()
 	case OP_SWAP:
 		return se.OpSwap()
+	case OP_CHECKLOCKTIMEVERIFY:
+		return se.OpCheckLocktimeVerify()
+	case OP_CHECKSEQUENCEVERIFY:
+		return se.OpCheckSequenceVerify()
 	default:
 		return false
 	}
@@ -715,5 +744,120 @@ func (se *ScriptEngine) OpSha1() bool {
 	hash := sha1.Sum(element.Data)
 
 	se.pushData(hash[:])
+	return true
+}
+
+// OpCheckLocktimeVerify implements OP_CHECKLOCKTIMEVERIFY (BIP 65)
+// Marks transaction as invalid if the top stack item is greater than the transaction's locktime field
+// or if the sequence number is 0xffffffff (finalized)
+func (se *ScriptEngine) OpCheckLocktimeVerify() bool {
+	// BIP 65: OP_CHECKLOCKTIMEVERIFY
+
+	if len(se.stack) < 1 {
+		return false
+	}
+
+	// Peek at top stack element (don't pop - CLTV doesn't consume the value)
+	element, ok := se.peek()
+	if !ok {
+		return false
+	}
+
+	// Decode the locktime threshold from stack
+	stackLocktime := DecodeNum(element.Data)
+
+	// 1. Check if the stack value is negative (BIP 65 rule)
+	if stackLocktime < 0 {
+		return false
+	}
+
+	// 2. Check if input sequence is final (0xffffffff means locktime is disabled)
+	// BIP 65: nSequence must be < 0xffffffff
+	if se.sequence == 0xffffffff {
+		return false
+	}
+
+	// 3. Check that stack locktime and tx locktime are the same type
+	// Types: block height (< 500000000) or Unix timestamp (>= 500000000)
+	const LOCKTIME_THRESHOLD = 500000000
+
+	stackIsTimestamp := stackLocktime >= LOCKTIME_THRESHOLD
+	txIsTimestamp := se.locktime >= LOCKTIME_THRESHOLD
+
+	// They must both be block heights or both be timestamps
+	if stackIsTimestamp != txIsTimestamp {
+		return false
+	}
+
+	// 4. Check that transaction locktime >= stack locktime
+	// This means the transaction is locked until at least the stack value
+	if int64(se.locktime) < stackLocktime {
+		return false
+	}
+
+	// Success - CLTV is a "verify" operation, so it doesn't modify the stack
+	return true
+}
+
+// OpCheckSequenceVerify implements OP_CHECKSEQUENCEVERIFY (BIP 112)
+// Relative lock-time using consensus-enforced sequence numbers (BIP 68)
+func (se *ScriptEngine) OpCheckSequenceVerify() bool {
+	// BIP 112: OP_CHECKSEQUENCEVERIFY
+
+	if len(se.stack) < 1 {
+		return false
+	}
+
+	// Peek at top stack element (don't pop - CSV doesn't consume the value)
+	element, ok := se.peek()
+	if !ok {
+		return false
+	}
+
+	// Decode the sequence value from stack
+	stackSequence := DecodeNum(element.Data)
+
+	// 1. Check if the stack value is negative (BIP 112 rule)
+	if stackSequence < 0 {
+		return false
+	}
+
+	// BIP 112: If bit 31 of stack value is set, CSV succeeds immediately
+	// This allows scripts to opt-out of relative lock-time
+	const SEQUENCE_LOCKTIME_DISABLE_FLAG = uint32(1 << 31)
+	if uint32(stackSequence)&SEQUENCE_LOCKTIME_DISABLE_FLAG != 0 {
+		return true
+	}
+
+	// 2. Check if tx input sequence has disable flag set (bit 31)
+	// If bit 31 of nSequence is set, BIP 68 is disabled, so CSV fails
+	if se.sequence&SEQUENCE_LOCKTIME_DISABLE_FLAG != 0 {
+		return false
+	}
+
+	// 3. Check that stack and sequence have same lock-time type (bit 22)
+	// Bit 22: 0 = block-based, 1 = time-based (512-second granularity)
+	const SEQUENCE_LOCKTIME_TYPE_FLAG = uint32(1 << 22)
+
+	stackType := uint32(stackSequence) & SEQUENCE_LOCKTIME_TYPE_FLAG
+	sequenceType := se.sequence & SEQUENCE_LOCKTIME_TYPE_FLAG
+
+	if stackType != sequenceType {
+		return false
+	}
+
+	// 4. Compare the masked values (lower 16 bits)
+	// Mask extracts bits 0-15 (the actual lock-time value)
+	const SEQUENCE_LOCKTIME_MASK = 0x0000ffff
+
+	stackValue := uint32(stackSequence) & SEQUENCE_LOCKTIME_MASK
+	sequenceValue := se.sequence & SEQUENCE_LOCKTIME_MASK
+
+	// Sequence must be >= stack value (input must have aged enough)
+	if sequenceValue < stackValue {
+		return false
+	}
+
+	// Success - CSV is a "verify" operation, so it doesn't modify the stack
 	return true
 }

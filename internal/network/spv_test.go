@@ -237,8 +237,6 @@ func TestSPVFlowBIP158(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const NODE_COMPACT_FILTERS = uint64(1 << 6) // Bit 6
-
 	// Check if peer supports compact filters
 	if node.PeerServices&NODE_COMPACT_FILTERS == 0 {
 		t.Skipf("Peer does not support BIP 157 compact filters. Services: %d (binary: %064b)",

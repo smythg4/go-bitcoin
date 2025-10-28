@@ -8,6 +8,13 @@ import (
 	"math/big"
 )
 
+// WIF (Wallet Import Format) version bytes
+const (
+	WIF_PREFIX_MAINNET byte = 0x80 // Mainnet private key prefix
+	WIF_PREFIX_TESTNET byte = 0xef // Testnet private key prefix
+	WIF_COMPRESSED_SUFFIX byte = 0x01 // Compressed public key marker
+)
+
 type PublicKey = eccmath.S256Point
 
 type PrivateKey struct {
@@ -47,9 +54,9 @@ func (pk *PrivateKey) Serialize(compressed, testnet bool) string {
 	secret := pk.secret.Bytes()
 	copy(secretBytes[32-len(secret):], secret) // right-align with zero padding
 
-	prefix := byte(0x80)
+	prefix := WIF_PREFIX_MAINNET
 	if testnet {
-		prefix = 0xef
+		prefix = WIF_PREFIX_TESTNET
 	}
 
 	// build result
@@ -58,7 +65,7 @@ func (pk *PrivateKey) Serialize(compressed, testnet bool) string {
 
 	// Add 0x01 suffix only if compressed
 	if compressed {
-		result = append(result, 0x01)
+		result = append(result, WIF_COMPRESSED_SUFFIX)
 	}
 
 	return encoding.EncodeBase58Checksum(result)
