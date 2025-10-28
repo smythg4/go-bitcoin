@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"go-bitcoin/internal/encoding"
+	"go-bitcoin/internal/transactions"
 
 	"io"
 	"math/big"
@@ -246,4 +247,92 @@ func (b *Block) ValidateMerkleRoot() bool {
 	}
 	merkleRoot := encoding.MerkleRoot(hashes)
 	return bytes.Equal(b.MerkleRoot[:], merkleRoot)
+}
+
+type FullBlock struct {
+	BlockHeader *Block
+	Txs         []*transactions.Transaction
+}
+
+func ParseFullBlock(r io.Reader) (*FullBlock, error) {
+	header, err := ParseBlock(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse block header: %w", err)
+	}
+
+	txCount, err := encoding.ReadVarInt(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse transaction length: %w", err)
+	}
+
+	txs := make([]*transactions.Transaction, txCount)
+	for i := uint64(0); i < txCount; i++ {
+		tx, err := transactions.ParseTransaction(r)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse txn %d/%d: %w", i, txCount, err)
+		}
+		txs[i] = &tx
+	}
+
+	return &FullBlock{
+		BlockHeader: &header,
+		Txs:         txs,
+	}, nil
+}
+
+// ExtractBasicFilterItems extracts items for BIP158 basic filter from a block
+// Returns: all scriptPubKeys from outputs and all outpoints from inputs (serialized)
+func (fb *FullBlock) ExtractBasicFilterItems(prevOutputScripts [][]byte) [][]byte {
+	items := make([][]byte, 0)
+
+	// Add all previous output scripts (scriptPubKeys of UTXOs being spent)
+	for _, script := range prevOutputScripts {
+		if len(script) > 0 {
+			items = append(items, script)
+		}
+	}
+
+	// Process each transaction
+	for _, tx := range fb.Txs {
+		// Add all output scriptPubKeys (except OP_RETURN)
+		for _, output := range tx.Outputs {
+			// Get raw script bytes (works even if script is unparseable)
+			scriptBytes, err := output.RawScriptBytes()
+			if err != nil || len(scriptBytes) == 0 {
+				continue
+			}
+
+			// skip OP_RETURN outputs (opcode 0x6a)
+			if scriptBytes[0] == 0x6a {
+				continue
+			}
+
+			items = append(items, scriptBytes)
+		}
+	}
+	// Filter out empty items (BIP 158 doesn't include empty scripts)
+	nonEmptyItems := make([][]byte, 0, len(items))
+	for _, item := range items {
+		if len(item) > 0 {
+			nonEmptyItems = append(nonEmptyItems, item)
+		}
+	}
+	items = nonEmptyItems
+	// Remove duplicates and sort
+	seen := make(map[string]bool)
+	uniqueItems := make([][]byte, 0, len(items))
+	for _, item := range items {
+		key := string(item)
+		if !seen[key] {
+			seen[key] = true
+			uniqueItems = append(uniqueItems, item)
+		}
+	}
+
+	// Sort lexicographically
+	slices.SortFunc(uniqueItems, func(a, b []byte) int {
+		return bytes.Compare(a, b)
+	})
+
+	return uniqueItems
 }

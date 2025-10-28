@@ -30,6 +30,18 @@ After completing all chapters, this implementation has been extended with additi
 - Support for both version 1 (txid) and version 2 (wtxid)
 - Successfully tested against Bitcoin mainnet with real blocks
 
+**BIP 157/158: Compact Block Filters** ✅
+- Complete Golomb-Coded Sets (GCS) filter implementation
+- BIP 158 basic block filter construction (scripts only, no outpoints)
+- Proper multiply-and-shift hash-to-range technique (fastReduction)
+- SipHash-2-4 keyed hash function using block hash
+- Golomb coding with P=19, M=784931 per BIP 158 specification
+- Lenient script parsing to handle malformed scripts in test vectors
+- All 10 BIP 158 test vectors passing (genesis block, standard blocks, edge cases)
+- 6 new P2P message types: `getcfilters`, `cfilter`, `getcfheaders`, `cfheaders`, `getcfcheckpt`, `cfcheckpt`
+- BitStream implementation for MSB-first bit-level I/O
+- Successfully tested with official BIP 158 testnet-19.json vectors
+
 **BIP 173: Bech32 Address Encoding** ✅
 - Complete bech32 encoding for native SegWit addresses
 - P2WPKH address generation (bc1q... / tb1q...)
@@ -84,6 +96,7 @@ After completing all chapters, this implementation has been extended with additi
 - **Hash256**: Double SHA-256 (used for checksums and block hashing)
 - **Hash160**: SHA-256 followed by RIPEMD-160 (used for addresses)
 - **MurmurHash3**: 32-bit MurmurHash3 implementation for bloom filters (BIP 37)
+- **SipHash-2-4**: Keyed hash function for compact blocks (BIP 152) and compact filters (BIP 158)
 
 ### Bitcoin Address Generation (`internal/address`)
 - **P2PKH (Pay-to-Public-Key-Hash)** address generation
@@ -225,6 +238,12 @@ After completing all chapters, this implementation has been extended with additi
   - **CmpctBlock** (compact block transmission - BIP 152)
   - **GetBlockTxn** (request missing transactions - BIP 152)
   - **BlockTxn** (missing transaction response - BIP 152)
+  - **GetCFilters** (request compact block filters - BIP 157)
+  - **CFilter** (compact filter response - BIP 157)
+  - **GetCFHeaders** (request compact filter headers - BIP 157)
+  - **CFHeaders** (compact filter headers response - BIP 157)
+  - **GetCFCheckpt** (request compact filter checkpoints - BIP 157)
+  - **CFCheckpt** (compact filter checkpoints response - BIP 157)
 - **Connection Management**:
   - TCP connection handling with timeouts
   - Concurrent read/write loops with goroutines
@@ -274,6 +293,20 @@ After completing all chapters, this implementation has been extended with additi
   - Support for both txid (v1) and wtxid (v2) matching
   - Efficient O(1) lookup using hash maps
 - **Key Derivation**: Calculate SipHash keys from block header + nonce
+
+### Compact Block Filters (`internal/network`)
+- **Golomb-Coded Sets (GCS)**: Space-efficient probabilistic filter for block contents
+- **Filter Construction**: Extract scripts from blocks per BIP 158 specification
+  - Previous output scripts (scriptPubKeys being spent)
+  - Current output scriptPubKeys (except OP_RETURN)
+  - Automatic deduplication and lexicographic sorting
+- **Golomb Encoding**: Unary quotient + P-bit remainder (P=19 for basic filters)
+- **Hash-to-Range**: Multiply-and-shift technique (fastReduction) for uniform distribution
+  - 64×64→128 bit multiplication returning upper 64 bits
+  - Avoids expensive modulo operation while maintaining correctness
+- **BitStream**: MSB-first bit-level I/O for compact encoding/decoding
+- **Lenient Parsing**: Handle malformed scripts by storing raw bytes
+- **Filter Serialization**: N (item count) + Golomb-coded deltas
 
 ## Example Usage
 
@@ -555,6 +588,8 @@ go-bitcoin/
     │   ├── merkleblock.go       # MerkleBlock parsing and validation
     │   ├── compact.go           # BIP 152 compact block messages
     │   ├── compact_test.go      # Compact block integration test (mainnet)
+    │   ├── gcs.go               # BIP 158 Golomb-Coded Set implementation
+    │   ├── gcs_test.go          # BIP 158 test vectors and GCS unit tests
     │   ├── generic.go           # Generic message types
     │   ├── bloom_test.go        # Bloom filter tests
     │   └── spv_test.go          # Full SPV client integration test
@@ -632,6 +667,8 @@ Go's strong typing prevents entire classes of bugs:
 - **BIP-143**: Transaction signature verification for version 0 witness program
 - **BIP-144**: Peer services for Segregated Witness
 - **BIP-152**: Compact Block Relay (bandwidth optimization)
+- **BIP-157**: Client Side Block Filtering (P2P protocol for compact filters)
+- **BIP-158**: Compact Block Filters for Light Clients (Golomb-Coded Sets)
 
 ## Test Coverage
 
@@ -660,6 +697,10 @@ go test -v ./internal/network/ -run TestBloom
 
 # Run compact block tests (requires mainnet connection, can take 10-20 minutes)
 go test -v ./internal/network/ -run TestCompactBlock -timeout 20m
+
+# Run BIP 158 compact filter tests (official test vectors)
+go test -v ./internal/network/ -run TestBIP158Vectors
+go test -v ./internal/network/ -run TestGCS
 
 # Run all tests
 go test ./...

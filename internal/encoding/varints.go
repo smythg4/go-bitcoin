@@ -59,3 +59,22 @@ func EncodeVarInt(i uint64) ([]byte, error) {
 	}
 	return nil, fmt.Errorf("varint encoding error - %d invalid input", i)
 }
+
+func DecodeVarInt(data []byte) (uint64, []byte) {
+	if len(data) == 0 {
+		return 0, data
+	}
+
+	first := data[0]
+	if first < 0xfd {
+		return uint64(first), data[1:]
+	}
+	if first == 0xfd {
+		return uint64(binary.LittleEndian.Uint16(data[1:3])), data[3:]
+	}
+	if first == 0xfe {
+		return uint64(binary.LittleEndian.Uint32(data[1:5])), data[5:]
+	}
+	// 0xff
+	return binary.LittleEndian.Uint64(data[1:9]), data[9:]
+}

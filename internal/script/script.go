@@ -136,7 +136,43 @@ func ParseScript(r io.Reader) (Script, error) {
 	return s, nil
 }
 
+// ReadScriptBytes reads raw script bytes without parsing into commands
+// Used for BIP 158 filters when script may be malformed but we still need the bytes
+func ReadScriptBytes(r io.Reader) ([]byte, error) {
+	length, err := encoding.ReadVarInt(r)
+	if err != nil {
+		return nil, fmt.Errorf("script read error: %w", err)
+	}
+
+	scriptBytes := make([]byte, length)
+	n, err := io.ReadFull(r, scriptBytes)
+	if err != nil {
+		return nil, fmt.Errorf("script read error: %w", err)
+	}
+	if uint64(n) != length {
+		return nil, fmt.Errorf("script read error: expected %d bytes, got %d", length, n)
+	}
+
+	return scriptBytes, nil
+}
+
 func (s *Script) Serialize() ([]byte, error) {
+	serialized, err := s.RawBytes()
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract raw bytes: %w", err)
+	}
+
+	// prepend with varint length
+	length, err := encoding.EncodeVarInt(uint64(len(serialized)))
+	if err != nil {
+		return nil, fmt.Errorf("script serialization error: varint length - %w", err)
+	}
+	return append(length, serialized...), nil
+}
+
+// RawBytes returns the script bytes without varint length prefix
+// Used for BIP 158 filters where scripts are not length-prefixed
+func (s *Script) RawBytes() ([]byte, error) {
 	var result bytes.Buffer
 
 	for _, cmd := range s.CommandStack {
@@ -144,7 +180,6 @@ func (s *Script) Serialize() ([]byte, error) {
 			dataLen := len(cmd.Data)
 
 			if dataLen <= 75 {
-				// length fits in one byte
 				if err := result.WriteByte(byte(dataLen)); err != nil {
 					return nil, err
 				}
@@ -152,7 +187,6 @@ func (s *Script) Serialize() ([]byte, error) {
 					return nil, err
 				}
 			} else if dataLen <= 0xff {
-				// use OP_PUSHDATA1
 				if err := result.WriteByte(OP_PUSHDATA1); err != nil {
 					return nil, err
 				}
@@ -163,7 +197,6 @@ func (s *Script) Serialize() ([]byte, error) {
 					return nil, err
 				}
 			} else if dataLen <= 0xffff {
-				// use OP_PUSHDATA2
 				if err := result.WriteByte(OP_PUSHDATA2); err != nil {
 					return nil, err
 				}
@@ -176,7 +209,6 @@ func (s *Script) Serialize() ([]byte, error) {
 					return nil, err
 				}
 			} else {
-				// use OP_PUSHDATA4
 				if err := result.WriteByte(OP_PUSHDATA4); err != nil {
 					return nil, err
 				}
@@ -190,20 +222,13 @@ func (s *Script) Serialize() ([]byte, error) {
 				}
 			}
 		} else {
-			// just write the opcode
 			if err := result.WriteByte(cmd.Opcode); err != nil {
 				return nil, err
 			}
 		}
 	}
 
-	// prepend with varint length
-	serialized := result.Bytes()
-	length, err := encoding.EncodeVarInt(uint64(len(serialized)))
-	if err != nil {
-		return nil, fmt.Errorf("script serialization error: varint length - %w", err)
-	}
-	return append(length, serialized...), nil
+	return result.Bytes(), nil
 }
 
 func (s Script) Combine(scriptPubKey Script) Script {

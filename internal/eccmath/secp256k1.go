@@ -67,7 +67,6 @@ func (s *Secp256k1Group) Sign(key *big.Int, z *big.Int) (Signature, error) {
 	if err != nil {
 		return Signature{}, fmt.Errorf("failed to generate random k: %w", err)
 	}
-	//k := big.NewInt(1234567890)
 
 	R := s.ScalarBaseMultiply(k)
 

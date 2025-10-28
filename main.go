@@ -7,6 +7,7 @@ import (
 	"go-bitcoin/internal/network"
 	"log"
 	"net"
+	"time"
 )
 
 const TESTNET_PORT int = 18333
@@ -68,7 +69,7 @@ func main() {
 			log.Fatal(err)
 		}
 		// Wait for headers response
-		env, err := node.Receive("headers")
+		env, err := node.ReceiveWithTimeout("headers", 30*time.Second)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -78,7 +79,6 @@ func main() {
 			log.Fatal(err)
 		}
 		for _, header := range headers.Blocks {
-			//fmt.Println(header.ID())
 			if !header.CheckProofOfWork() {
 				fmt.Printf("bad PoW at block %d\n", count)
 			}

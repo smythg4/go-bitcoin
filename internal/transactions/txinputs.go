@@ -171,8 +171,19 @@ func (t *TxIn) ScriptPubKey(testNet bool) (script.Script, error) {
 }
 
 type TxOut struct {
-	Amount       uint64
-	ScriptPubKey script.Script
+	Amount         uint64
+	ScriptPubKey   script.Script
+	rawScriptBytes []byte // Raw script bytes even if unparseable
+}
+
+// RawScriptBytes returns the raw script bytes for filter generation
+// Falls back to serializing ScriptPubKey if raw bytes weren't stored
+func (t *TxOut) RawScriptBytes() ([]byte, error) {
+	if len(t.rawScriptBytes) > 0 {
+		return t.rawScriptBytes, nil
+	}
+	// Fallback for older code paths
+	return t.ScriptPubKey.RawBytes()
 }
 
 func (t TxOut) String() string {
@@ -189,15 +200,30 @@ func ParseTxOut(r io.Reader) (TxOut, error) {
 	}
 	amount := binary.LittleEndian.Uint64(buf)
 
-	// scriptpubkey
-	script, err := script.ParseScript(r)
+	// scriptpubkey - read raw bytes first
+	scriptBytes, err := script.ReadScriptBytes(r)
 	if err != nil {
 		return TxOut{}, fmt.Errorf("txout parse error - %w", err)
 	}
 
+	// Try to parse the script, but use empty script if parsing fails
+	// (some blocks have intentionally malformed scripts)
+	scriptObj := script.Script{}
+	if len(scriptBytes) > 0 {
+		// Create a reader with the varint length prefix + script bytes
+		varIntLen, _ := encoding.EncodeVarInt(uint64(len(scriptBytes)))
+		scriptReader := bytes.NewReader(append(varIntLen, scriptBytes...))
+		parsedScript, err := script.ParseScript(scriptReader)
+		if err == nil {
+			scriptObj = parsedScript
+		}
+		// If parsing fails, we keep the empty script but the raw bytes are still available
+	}
+
 	return TxOut{
 		Amount:       amount,
-		ScriptPubKey: script,
+		ScriptPubKey: scriptObj,
+		rawScriptBytes: scriptBytes, // Store raw bytes for filter generation
 	}, nil
 }
 

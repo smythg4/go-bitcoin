@@ -264,6 +264,7 @@ func (sn *SimpleNode) Handshake() error {
 	return nil
 }
 
+// default timeout of 5 seconds for a receive
 func (sn *SimpleNode) Receive(command string) (NetworkEnvelope, error) {
 	timeout := time.NewTimer(5 * time.Second)
 	defer timeout.Stop()
@@ -285,6 +286,7 @@ func (sn *SimpleNode) Receive(command string) (NetworkEnvelope, error) {
 	}
 }
 
+// user configurable timeout parameter
 func (sn *SimpleNode) ReceiveWithTimeout(command string, timeout time.Duration) (NetworkEnvelope, error) {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
