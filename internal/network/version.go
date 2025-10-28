@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"go-bitcoin/internal/encoding"
+	"io"
 	"math/rand/v2"
 	"net"
 	"time"
@@ -138,4 +139,30 @@ func (vm *VersionMessage) Serialize() ([]byte, error) {
 
 func (vm VersionMessage) Command() string {
 	return "version"
+}
+
+func ParseVersionMessage(r io.Reader) (*VersionMessage, error) {
+	buf4 := make([]byte, 4)
+	buf8 := make([]byte, 8)
+
+	// Read version
+	if _, err := io.ReadFull(r, buf4); err != nil {
+		return nil, err
+	}
+	version := int32(binary.LittleEndian.Uint32(buf4))
+
+	// Read services
+	if _, err := io.ReadFull(r, buf8); err != nil {
+		return nil, err
+	}
+	services := binary.LittleEndian.Uint64(buf8)
+
+	// ... parse rest of fields (timestamp, addresses, nonce, user agent, etc.)
+	// For now, just return what we need:
+
+	return &VersionMessage{
+		Version:  version,
+		Services: services,
+		// ... other fields
+	}, nil
 }

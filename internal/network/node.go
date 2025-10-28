@@ -1,6 +1,7 @@
 package network
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -11,10 +12,11 @@ import (
 type MessageHandler func(NetworkEnvelope)
 
 type SimpleNode struct {
-	Addr    NetAddr
-	conn    net.Conn
-	TestNet bool
-	Logging bool
+	Addr         NetAddr
+	conn         net.Conn
+	TestNet      bool
+	Logging      bool
+	PeerServices uint64
 
 	incoming chan NetworkEnvelope
 	outgoing chan Message
@@ -67,6 +69,7 @@ func NewSimpleNode(host string, port int, testNet, logging bool) (*SimpleNode, e
 	sn.RegisterChannel("getblocktxn", 1)
 	sn.RegisterChannel("blocktxn", 1)
 	sn.RegisterChannel("sendcmpct", 1)
+	sn.RegisterChannel("cfilter", 1)
 	sn.wg.Add(3)
 
 	go sn.readLoop()
@@ -247,12 +250,21 @@ func (sn *SimpleNode) Handshake() error {
 		return err
 	}
 
-	// blocks on receiving a version and verack response
-	<-sn.channelsMap["version"]
+	// Receive peer's version message and parse it
+	versionEnv := <-sn.channelsMap["version"]
+	peerVersion, err := ParseVersionMessage(bytes.NewReader(versionEnv.Payload))
+	if err != nil {
+		return fmt.Errorf("failed to parse peer version: %w", err)
+	}
+
+	// Store peer's services
+	sn.PeerServices = peerVersion.Services
+	if sn.Logging {
+		fmt.Printf("📥 Peer services: %d (binary: %064b)\n", sn.PeerServices, sn.PeerServices)
+	}
+
 	<-sn.channelsMap["verack"]
 
-	// this explicit send solves the previous race condition
-	// consider removing the automated verack response
 	if err := sn.Send(&VerackMessage{}); err != nil {
 		return err
 	}
@@ -320,8 +332,8 @@ func (sn *SimpleNode) RequestMerkleBlock(blockHash [32]byte) error {
 
 func (sn *SimpleNode) Close() error {
 	close(sn.done)
-	sn.wg.Wait()
 	err := sn.conn.Close()
+	sn.wg.Wait()
 
 	if sn.Logging {
 		fmt.Printf("closing connection to %s...\n", sn.conn.RemoteAddr().String())

@@ -3,11 +3,12 @@ package network
 import (
 	"fmt"
 	"go-bitcoin/internal/encoding"
+	"io"
 	"slices"
 )
 
 type GolombCodedSet struct {
-	NumItems uint64 // number of itmes in the filter
+	NumItems uint64 // number of items in the filter
 	P        uint   // false positive rate parameter (19 for BIP 158 basic filter)
 	M        uint64 // modulus (784931 for BIP 158 basic filter)
 	data     []byte // compressed filter data
@@ -97,6 +98,31 @@ func (g *GolombCodedSet) Serialize() ([]byte, error) {
 		return nil, err
 	}
 	return append(nBytes, g.data...), nil
+}
+
+// ParseGCSFilter returns a GCS from a reader
+func ParseGCSFilter(r io.Reader) (*GolombCodedSet, error) {
+	numItems, err := encoding.ReadVarInt(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract numItems: %w", err)
+	}
+
+	// Read all remaining bytes (Golomb-coded data)
+	dataSlice, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract data: %w", err)
+	}
+
+	// BIP158 defaults
+	m := uint64(784931)
+	p := uint(19)
+
+	return &GolombCodedSet{
+		NumItems: numItems,
+		data:     dataSlice,
+		M:        m,
+		P:        p,
+	}, nil
 }
 
 func hashToRange(item []byte, n, m uint64, k0, k1 uint64) (uint64, error) {
